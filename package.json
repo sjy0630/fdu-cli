@@ -1,0 +1,44 @@
+{
+  "name": "fdu-cli",
+  "version": "0.1.0",
+  "description": "复旦校园服务命令行与 MCP 服务：eLearning、教务（课表 / 考试 / 成绩 / 培养方案）、校园卡、宿舍电量、图书馆、学校通知、树洞与旦克、学生邮箱。给 Claude Code、Codex 等编程助理使用。",
+  "type": "module",
+  "bin": {
+    "fdu": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "skills",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "tsx src/cli.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm test && npm run build",
+    "docs": "tsx scripts/gen-docs.ts",
+    "prepare": "node scripts/build.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "cheerio": "1.1.2",
+    "imapflow": "1.7.8",
+    "mailparser": "3.14.1",
+    "playwright-core": "1.63.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/mailparser": "3.9.0",
+    "@types/node": "22.20.5",
+    "esbuild": "0.28.2",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7"
+  },
+  "license": "MIT"
+}

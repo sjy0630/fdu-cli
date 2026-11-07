@@ -1,0 +1,62 @@
+---
+name: fdu-cli
+description: 查询复旦大学校园服务：eLearning 课程 / 作业 / DDL / 公告 / 课件下载，教务系统课表 / 考试 / 成绩 / 绩点排名 / 培养方案 / 选课结果，校园卡余额，宿舍电量，图书馆人数和文献检索，学校和院系官网通知，树洞和旦克课程评价，学生邮箱。用户问到自己在复旦的课程、作业、考试、成绩、校园生活，或要下载课件、找通知、找文献时使用。
+---
+
+# 复旦校园服务（fdu-cli）
+
+用 `fdu` 命令行（或同名 MCP 服务的工具）读取用户本人在复旦各系统里的数据。所有操作对学校系统**只读**：不能提交作业、选课、发帖、发邮件。
+
+## 怎么调用
+
+- 配置了 MCP 服务 `fudan` 时，直接用它的工具（`elearning_todo`、`jw_timetable` 等，命令里的点换成下划线）。
+- 否则在终端运行 `fdu <服务> <操作> --参数 值 --compact`，读 stdout 里的 JSON：
+  - 成功：`{"ok":true,"data":...}`
+  - 失败：`{"ok":false,"error":{"code":"...","message":"...","hint":"..."}}`，照 `hint` 处理。
+- 不确定参数时先 `fdu describe <服务.操作>`；全部命令见同目录的 [reference.md](reference.md)，或运行 `fdu services`。
+
+## 登录
+
+- 先看 `fdu status`。`NEED_LOGIN` 时请**用户自己**在终端运行 `fdu login`：会打开浏览器，用户在学校的登录页里输入账号密码、完成短信 / 企业微信验证，窗口会自动关闭。不要替用户输入、索要或记录密码。
+  - 用户同意时你也可以运行 `fdu login` 帮他打开浏览器，但它会等待用户在浏览器里操作（最长 5 分钟）。
+- 树洞 / 旦克：`NEED_HOLE_LOGIN` 时请用户在终端运行 `fdu hole login --email 学号@m.fudan.edu.cn`（要在终端里输入密码，只能用户自己运行）。校外访问需要先 `fdu login --webvpn`。
+- 学生邮箱：`NEED_MAIL_SETUP` 时请用户运行 `fdu mail setup --user 邮箱地址`，输入网页邮箱里生成的客户端专用密码。
+- 公开数据（图书馆人数、文献检索、学校通知）不用登录。
+
+## 隐私
+
+- `jw.grades`、`jw.gpa`、`jw.program`、`mail.list`、`mail.read` 返回隐私数据：只用来回答用户本人的问题。**不要**写进代码仓库、提交信息、日志、issue / PR，也不要贴到别的服务里。
+- 不要把 `~/.config/fdu-cli/`（Windows：`%APPDATA%\fdu-cli\`）里的文件读出来、复制或提交，那是登录凭证。
+- 树洞内容是匿名同学的个人看法：引用时说明来源和洞号，综合多条再下结论，不当作事实。
+
+## 时间
+
+返回里的时间是 ISO（UTC，末尾 Z）。给用户看时用同时返回的 `*Shanghai` 字段，或者自己加 8 小时换算成北京时间。
+
+## 常用做法
+
+| 用户想要 | 命令 |
+|---|---|
+| 这周有什么 DDL | `fdu todo --days 7`（= `fdu elearning todo`） |
+| 某门课的作业 | `fdu elearning assignments --course 数据结构` |
+| 今天 / 这周的课 | `fdu jw timetable`，按 `weekday`（1 = 周一）和教学周 `weeks` 筛选 |
+| 考试安排 | `fdu jw exams` |
+| 成绩、绩点、排名 | `fdu jw grades`、`fdu jw gpa` |
+| 还差多少学分 | `fdu jw program` |
+| 下学期选了什么课 | `fdu jw selected --which next` |
+| 下载课件 | 先 `fdu elearning files --course 线性代数 --search 第5讲`，再 `fdu elearning download --file <id> --out ./slides`（不覆盖已有文件） |
+| 课程公告 | `fdu elearning announcements --days 7` |
+| 教务处 / 院系通知 | `fdu notices list --source 教务处`，细节 `fdu notices read --url <链接>` |
+| 找论文 | `fdu library search --query "..." --year-from 2022`，只依据摘要总结，给出 DOI 或链接 |
+| 哪个图书馆人少 | `fdu library seats` |
+| 校园卡 / 电费 | `fdu card balance`、`fdu dorm electricity` |
+| 课程口碑 | `fdu danke search --keyword 数据结构` → `fdu danke reviews --id <course_group_id>` |
+| 树洞里怎么说 | `fdu hole search --keyword 食堂` → `fdu hole read --id <洞号>` |
+| 最近的邮件 | `fdu mail list --days 3`，正文 `fdu mail read --uid <uid>` |
+
+## 出错时
+
+- `NEED_LOGIN` / `NEED_HOLE_LOGIN` / `NEED_MAIL_SETUP`：按上面的「登录」处理，然后重试一次。
+- `UPSTREAM`：学校系统出错或网络问题。部分院系网站、树洞只允许校园网访问，校外请用户连学校 VPN 或 `fdu login --webvpn`。
+- `FORMAT_CHANGED`：学校页面改版了，告诉用户，别反复重试。
+- `NO_BROWSER`：用户需要安装 Chrome / Edge，或设置 `FDU_BROWSER`。

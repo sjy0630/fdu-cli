@@ -1,0 +1,12 @@
+{
+  "name": "fdu-cli",
+  "description": "复旦校园服务：fdu 命令行的 Claude Code 插件（技能 + MCP 服务）",
+  "owner": { "name": "Fudaner 团队" },
+  "plugins": [
+    {
+      "name": "fdu-cli",
+      "source": "./",
+      "description": "复旦 eLearning、教务、校园卡、宿舍电量、图书馆、通知、树洞与旦克、学生邮箱"
+    }
+  ]
+}

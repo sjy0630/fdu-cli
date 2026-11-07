@@ -1,0 +1,64 @@
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { z } from 'zod';
+import { Session } from './core/session';
+import { Store } from './core/store';
+import { FLAGS, OPS, type Ctx, type Op } from './ops';
+import { runOp } from './run';
+
+declare const __FDU_VERSION__: string;
+const VERSION = typeof __FDU_VERSION__ === 'string' ? __FDU_VERSION__ : '0.0.0-dev';
+
+const LOGIN_NOTE: Record<Op['login'], string> = {
+  uis: '需要复旦账号登录（没登录时返回 NEED_LOGIN，请用户在终端运行 `fdu login`，或调用 auth_login）。',
+  hole: '需要树洞账号（没登录时返回 NEED_HOLE_LOGIN，请用户在终端运行 `fdu hole login --email ...`）。',
+  mail: '需要配置学生邮箱（没配置时返回 NEED_MAIL_SETUP，请用户在终端运行 `fdu mail setup --user ...`）。',
+  none: '',
+};
+
+/** MCP 里的参数：命令行的布尔开关换成普通布尔值 */
+export function mcpShape(op: Op): z.ZodRawShape {
+  return Object.fromEntries(Object.entries(op.params).map(([k, v]) => [k, FLAGS.has(v as z.ZodType) ? z.boolean().optional().describe((v as z.ZodType).description ?? '') : v]));
+}
+
+export function toolDescription(op: Op): string {
+  return [
+    op.summary,
+    LOGIN_NOTE[op.login],
+    op.sensitive ? '返回的是隐私数据（成绩 / 邮件等）：只用来回答用户本人的问题，不要写进代码仓库、提交信息或发给别人。' : '',
+    op.effect === 'local-write' ? '会在本机写文件（不覆盖已有文件）。' : '',
+  ].filter(Boolean).join('\n');
+}
+
+export function buildServer(session: Session, store: Store): McpServer {
+  const server = new McpServer({ name: 'fudan', version: VERSION });
+  for (const op of OPS) {
+    if (op.mcp === false) continue;
+    server.registerTool(op.name.replace('.', '_'), {
+      description: toolDescription(op),
+      inputSchema: mcpShape(op),
+      annotations: { readOnlyHint: op.effect === 'read', destructiveHint: false, openWorldHint: true },
+    }, async (args: Record<string, unknown>) => {
+      const ctx: Ctx = { store, session, log: (m) => process.stderr.write(`${m}\n`), cwd: process.cwd(), now: () => Date.now() };
+      const result = await runOp(op, ctx, args ?? {});
+      await session.release();
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(result.ok ? result.data : result.error, null, 1) }],
+        ...(result.ok ? {} : { isError: true }),
+      };
+    });
+  }
+  return server;
+}
+
+/** fdu mcp：以 stdio 方式运行 MCP 服务（Claude Code、Codex、Cursor 等都支持） */
+export async function serveMcp(opts: { profile?: string; browser?: string } = {}): Promise<void> {
+  const store = new Store(opts.profile);
+  const session = new Session(store, { browserPath: opts.browser });
+  const server = buildServer(session, store);
+  const shutdown = async () => { await session.close(); process.exit(0); };
+  process.on('SIGINT', () => void shutdown());
+  process.on('SIGTERM', () => void shutdown());
+  process.stdin.on('end', () => void shutdown());
+  await server.connect(new StdioServerTransport());
+}

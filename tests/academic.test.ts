@@ -1,0 +1,102 @@
+import { describe, expect, it } from 'vitest';
+import { extractTables, modulesFromJson, profileFactsFromText, readProgramCompletion, readSelectedCourses, summarizeProgramTables, tablesToText } from '../src/services/academic';
+import type { CampusReader } from '../src/core/types';
+
+/** 培养方案完成情况、选课结果（页面和接口结构为虚构样例） */
+const programPage = `<html><body><h3>培养方案完成情况</h3><table>
+  <tr><th>课程类别</th><th>要求学分</th><th>已获学分</th><th>还需学分</th></tr>
+  <tr><td>通识教育</td><td>46</td><td>30</td><td>16</td></tr>
+  <tr><td>专业必修</td><td>60</td><td>34.5</td><td>25.5</td></tr>
+  <tr><td></td><td></td><td></td><td></td></tr>
+</table><table><tr><td>只有一行</td></tr></table></body></html>`;
+
+describe('培养方案完成情况', () => {
+  it('从页面表格认出类别、要求学分、已获学分', () => {
+    const tables = extractTables(programPage);
+    expect(tables).toHaveLength(1);
+    expect(tables[0].caption).toBe('培养方案完成情况');
+    expect(summarizeProgramTables(tables)).toEqual([
+      { name: '通识教育', required: 46, earned: 30, remaining: 16 },
+      { name: '专业必修', required: 60, earned: 34.5, remaining: 25.5 },
+    ]);
+    expect(tablesToText(tables)).toContain('课程类别 | 要求学分 | 已获学分 | 还需学分');
+  });
+
+  it('数据接口读不到时，用隐藏窗口打开页面读表格', async () => {
+    const rendered: string[] = [];
+    const reader: CampusReader = {
+      getText: async (url) => ({ url, status: 404, text: '' }),
+      render: async (url, ready) => { rendered.push(url); expect(ready(programPage, url)).toBe(true); return programPage; },
+    };
+    const r = await readProgramCompletion(reader, '12345');
+    expect(rendered).toEqual(['https://fdjwgl.fudan.edu.cn/student/for-std/program-completion-preview']);
+    expect(r.source).toBe('page');
+    expect(r.modules[0].name).toBe('通识教育');
+  });
+
+  it('数据接口返回 JSON 时压平成文本交给模型', async () => {
+    const r = await readProgramCompletion({ getText: async (url) => ({ url, status: 200, text: JSON.stringify({ modules: [{ name: '通识教育', requiredCredits: 46, finishedCredits: 30 }] }) }) }, '1');
+    expect(r.source).toBe('json');
+    expect(r.text).toContain('modules[0].requiredCredits: 46');
+  });
+});
+
+describe('培养方案：数据接口里的分类树', () => {
+  const tree = {
+    student: { major: { nameZh: '工科试验班（集成电路产教融合班）' }, department: { nameZh: '集成电路与微纳电子创新学院' }, grade: '2025' },
+    root: {
+      nameZh: '培养方案', requireCredits: 150, passedCredits: 53, takingCredits: 16.5,
+      children: [
+        { nameZh: '通识教育', requireCredits: 46, passedCredits: 20, children: [{ nameZh: '核心课程', requireCredits: 28, passedCredits: 12 }] },
+        { nameZh: '专业必修', requireCredits: 60, passedCredits: 25 },
+      ],
+    },
+  };
+
+  it('按层级认出各类别的要求、已获、在修学分', () => {
+    expect(modulesFromJson(tree)).toEqual([
+      { name: '培养方案', required: 150, earned: 53, remaining: 97, taking: 16.5 },
+      { name: '　通识教育', required: 46, earned: 20, remaining: 26 },
+      { name: '　　核心课程', required: 28, earned: 12, remaining: 16 },
+      { name: '　专业必修', required: 60, earned: 25, remaining: 35 },
+    ]);
+  });
+
+  it('接口只有汇总时，再读页面表格', async () => {
+    const reader: CampusReader = {
+      getText: async (url) => ({ url, status: url.includes('/json/') ? 200 : 404, text: JSON.stringify({ requireCredits: 150, passedCredits: 53 }) }),
+      render: async () => programPage,
+    };
+    const r = await readProgramCompletion(reader, '1');
+    expect(r.source).toBe('page');
+    expect(r.modules.map((m) => m.name)).toEqual(['通识教育', '专业必修']);
+    expect(r.text).toContain('数据接口汇总');
+  });
+
+  it('从教务数据里认出院系、专业、年级', () => {
+    const text = 'student.major.nameZh: 工科试验班（集成电路产教融合班）\nstudent.department.nameZh: 集成电路与微纳电子创新学院\nstudent.grade: 2025';
+    expect(profileFactsFromText(text)).toEqual({ department: '集成电路与微纳电子创新学院', major: '工科试验班（集成电路产教融合班）', grade: '2025' });
+  });
+});
+
+describe('选课结果', () => {
+  const semesterPage = `<select id="allSemesters"><option value="521" selected>2026-2027学年1学期</option></select><script>var semesters = JSON.parse('[{"id":541,"name":"2026-2027学年2学期"},{"id":521,"name":"2026-2027学年1学期"}]');</script>`;
+  const printData = (activities: unknown[]) => JSON.stringify({ studentTableVms: [{ id: 1, activities }] });
+  const act = (courseName: string, weekday: number, credits?: number) => ({ courseName, teachers: ['张老师'], room: 'H2215', weekday, startUnit: 6, endUnit: 7, weekIndexes: [1, 2, 3, 16], credits });
+
+  it('当前学期和下学期；按课程合并上课时间，合计学分', async () => {
+    const reader: CampusReader = { getText: async (url) => ({ url, status: 200, text:
+      url.endsWith('/course-table') ? semesterPage
+        : url.includes('/semester/521/') ? printData([act('数据结构', 1, 3), act('数据结构', 4, 3), act('线性代数', 3, 4)])
+        : printData([act('操作系统', 2)]) }) };
+    const cur = await readSelectedCourses(reader);
+    expect(cur.semester).toBe('2026-2027学年1学期');
+    expect(cur.courses.map((c) => [c.course, c.credits, c.sessions.length])).toEqual([['数据结构', 3, 2], ['线性代数', 4, 1]]);
+    expect(cur.totalCredits).toBe(7);
+    expect(cur.courses[0].sessions[0]).toBe('周一 第6–7节 H2215 1–16周');
+    const next = await readSelectedCourses(reader, 'next');
+    expect(next.semester).toBe('2026-2027学年2学期');
+    expect(next.totalCredits).toBeUndefined();
+  });
+});
+

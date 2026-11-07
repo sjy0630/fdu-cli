@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "fudan": {
+      "command": "fdu",
+      "args": ["mcp"]
+    }
+  }
+}
