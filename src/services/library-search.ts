@@ -2,7 +2,7 @@
  * 复旦图书馆文献检索（资源发现系统 Primo 的匿名接口，不需要登录）。
  *
  * 接口用法参考 LvDAO/fudan-library-mcp（MIT 协议，https://github.com/LvDAO/fudan-library-mcp），
- * 这里用 TypeScript 重写为 Fudaner 内置功能，用户不需要另外安装任何东西。
+ * 这里用 TypeScript 重写，用户不需要另外安装任何东西。
  * 只返回题录、摘要和原文入口，不下载、不阅读出版社全文。
  */
 export const PRIMO_ORIGIN = 'https://fudan-primo.hosted.exlibrisgroup.com.cn';

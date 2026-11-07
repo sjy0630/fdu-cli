@@ -83,7 +83,7 @@ export class TreeholeClient implements TreeholeApi {
   private parse<T>(res: RawResponse): T {
     if (!/json/.test(res.contentType)) {
       // 带上是哪个页面，方便排查（例如学校的提示页、WebVPN 的中间页）
-      console.warn('[Fudaner 树洞] 返回的不是数据', res.status, res.url, pageTitle(res.text));
+      console.warn('[fdu 树洞] 返回的不是数据', res.status, res.url, pageTitle(res.text));
       throw new TreeholeError(`树洞服务返回的不是数据（${res.status}，${hostOf(res.url)}${pageTitle(res.text) ? `「${pageTitle(res.text)}」` : ''}），请稍后再试。`);
     }
     try { return JSON.parse(res.text) as T; } catch { throw new TreeholeError('树洞服务返回的格式和预期不同。'); }

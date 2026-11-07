@@ -1,6 +1,6 @@
 import { NeedLoginError, PLATFORM_URLS, isPermissionDenied, isUisLoginUrl, type FudanAuth } from '../core/fudan-auth';
 
-/** eLearning（Canvas）平台数据类型：只保留 Fudaner 用得到的字段。 */
+/** eLearning（Canvas）平台数据类型：只保留用得到的字段。 */
 export interface CanvasCourse {
   id: string;
   name: string;

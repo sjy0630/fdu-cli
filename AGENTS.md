@@ -15,7 +15,7 @@ src/
     store.ts        本地配置目录（700 / 600，原子写入）
     errors.ts       错误码
     fudan-auth.ts   各平台地址、NeedLoginError
-  services/         各系统的读取和解析（大多从 Fudaner 桌面端移植，只依赖注入的读取接口，方便测试）
+  services/         各系统的读取和解析（只依赖注入的读取接口，方便测试）
 skills/fdu-cli/     给 Claude Code / Codex 的技能（SKILL.md）和命令参考
 .claude-plugin/     Claude Code 插件和插件市场清单；.mcp.json 是插件带的 MCP 服务
 tests/              vitest；页面和接口样例都是虚构内容

@@ -1,7 +1,7 @@
 {
   "name": "fdu-cli",
   "description": "复旦校园服务：fdu 命令行的 Claude Code 插件（技能 + MCP 服务）",
-  "owner": { "name": "Fudaner 团队" },
+  "owner": { "name": "sjy0630" },
   "plugins": [
     {
       "name": "fdu-cli",
