@@ -425,6 +425,47 @@ fdu venue free --venue 正大 --date 2026-11-10 --days 3
 
 登录：不用 · 只读 · MCP：`library_seats`
 
+## rooms
+
+### `fdu rooms login`
+
+登录空教室系统（学校多媒体教室的「在线课表」，校外经 WebVPN）：打开窗口，按提示登录，看到课表后窗口自动关闭。
+
+登录：不用 · 登录 / 退出 · 仅命令行
+
+### `fdu rooms free`
+
+空教室：某栋楼某天某几节都空着的教室（按座位从多到少），以及空到什么时候。默认今天、从现在这节起两节。数据来自学校多媒体教室系统的在线课表。
+
+登录：复旦账号 · 只读 · MCP：`rooms_free`
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `--building` | string | 是 | 教学楼代码，多个用逗号分开：H2、H3、H4、H5、H6、HGX、HQ、JA、JB、F1、F2、Z2（H2 = 二教，HGX = 光华楼） |
+| `--date` | string |  | 日期 YYYY-MM-DD，默认今天 |
+| `--from` | integer |  | 从第几节（1–14），默认现在这一节 |
+| `--to` | integer |  | 到第几节（含），默认 from 的下一节 |
+| `--min-seats` | integer |  | 至少多少座位 |
+
+```bash
+fdu rooms free --building H2
+fdu rooms free --building H3,H4 --date 2026-11-10 --from 6 --to 8
+```
+
+### `fdu rooms day`
+
+一栋楼一天的教室安排：每间教室哪几节有什么课或活动、哪几节空着。
+
+登录：复旦账号 · 只读 · MCP：`rooms_day`
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `--building` | string | 是 | 教学楼代码：H2、H3、H4、H5、H6、HGX、HQ、JA、JB、F1、F2、Z2 |
+| `--date` | string |  | 日期 YYYY-MM-DD，默认今天 |
+| `--room` | string |  | 只看某间教室，如 H2101 |
+
+## 图书馆
+
 ### `fdu library login`
 
 登录图书馆「我的借阅」：打开图书馆页面，点「登录」（走统一身份认证，已登录复旦账号时一般不用再输密码），看到借阅信息后窗口会自动关闭。

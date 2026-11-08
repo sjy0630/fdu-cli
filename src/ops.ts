@@ -28,6 +28,8 @@ import { NeedLoginError } from './core/fudan-auth';
 import { cardRange, readCardRecords, summarize } from './services/ecard';
 import { BOOKING_CAS, bookingReady, listVenues, matchVenues, SPORTS_PAGE, venueCalendar, type GetJson } from './services/venues';
 import { addDays } from './services/calendar';
+import { BUILDINGS, blocks, dayPageUrl, freeRooms, parseDayPage, periodAt, periodSpan, ROOMS_ORIGIN, type DayPage } from './services/rooms';
+import { toWebvpnUrl } from './services/webvpn';
 import { dedupe, describeCall, sanitizeHtml, type CapturedCall } from './services/capture';
 import { proxyFromEnv } from './core/session';
 
@@ -277,6 +279,26 @@ async function withLibrary<T>(ctx: Ctx, work: (getJson: LibGetJson) => Promise<T
   if (failure) throw failure;
   if (!result) throw new FduError('UPSTREAM', '图书馆页面没有打开。', '稍后再试；也可以直接打开 opac.fudan.edu.cn 查看。');
   return result.value;
+}
+
+const ROOMS_LOGIN_HINT = '运行 `fdu rooms login`，在打开的窗口里登录一次空教室系统。';
+
+/** 读一栋楼一天的「在线课表」（经 WebVPN，在浏览器里发请求） */
+async function roomsDayPage(ctx: Ctx, building: string, day: string): Promise<DayPage> {
+  if (!ctx.session.hasState()) throw new NeedLoginError('jwfw');
+  await ensureWebvpn(ctx.session);
+  const r = await ctx.session.browserFetch(dayPageUrl(building, day), { timeoutMs: 30_000 });
+  if (/\/urp\/|authCenter|\/idp\//.test(r.url)) throw new FduError('NEED_LOGIN', '空教室系统需要登录。', ROOMS_LOGIN_HINT);
+  if (/webvpn\.fudan\.edu\.cn\/login/.test(r.url)) throw new FduError('NEED_LOGIN', 'WebVPN 登录已过期。', '运行 `fdu login --webvpn`。');
+  return parseDayPage(r.text);
+}
+
+function buildingList(value: string): string[] {
+  const list = value.split(/[,，\s]+/).map((b) => b.trim().toUpperCase()).filter(Boolean);
+  const bad = list.filter((b) => !BUILDINGS.includes(b));
+  if (bad.length) throw new FduError('BAD_ARGS', `不认识的教学楼：${bad.join('、')}。`, `可选：${BUILDINGS.join('、')}（H2 = 二教，HGX = 光华楼）。`);
+  if (list.length > 6) throw new FduError('BAD_ARGS', '一次最多查 6 栋楼。');
+  return list;
 }
 
 /** 汇总和导出日历用的三类数据 */
@@ -743,6 +765,74 @@ export const OPS: Op[] = [
     name: 'library.seats', summary: '各图书馆在馆人数和还能进多少人（公开接口，不用登录）。', login: 'none', effect: 'read', params: {},
     async run(ctx) { return readLibrary(async (url) => { const r = await ctx.session.raw(url, { method: 'POST' }); return { status: r.status, text: r.text }; }); },
   }),
+  // ======================= 空教室 =======================
+  op({
+    name: 'rooms.login', summary: '登录空教室系统（学校多媒体教室的「在线课表」，校外经 WebVPN）：打开窗口，按提示登录，看到课表后窗口自动关闭。',
+    login: 'none', effect: 'auth', mcp: false, params: {},
+    async run(ctx) {
+      if (!ctx.session.hasState()) throw new NeedLoginError('jwfw');
+      await ensureWebvpn(ctx.session, { headless: false });
+      ctx.log('已打开空教室系统：如果要求登录，请在窗口里登录；看到课表后窗口会自动关闭。');
+      let ok = false;
+      await ctx.session.withPage(toWebvpnUrl(`${ROOMS_ORIGIN}/day.asp?b=H2`), (_page, html) => (ok = /statusTable_1/.test(html) && /td001/.test(html)), { headless: false, timeoutMs: 300_000 });
+      if (!ok) throw new FduError('NEED_LOGIN', '没有完成空教室系统的登录。', ROOMS_LOGIN_HINT);
+      await ctx.session.save();
+      return { loggedIn: true };
+    },
+  }),
+  op({
+    name: 'rooms.free', summary: '空教室：某栋楼某天某几节都空着的教室（按座位从多到少），以及空到什么时候。默认今天、从现在这节起两节。数据来自学校多媒体教室系统的在线课表。',
+    login: 'uis', effect: 'read',
+    params: {
+      building: z.string().min(1).describe(`教学楼代码，多个用逗号分开：${BUILDINGS.join('、')}（H2 = 二教，HGX = 光华楼）`),
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('日期 YYYY-MM-DD，默认今天'),
+      from: int('从第几节（1–14），默认现在这一节', 1, 14),
+      to: int('到第几节（含），默认 from 的下一节', 1, 14),
+      minSeats: int('至少多少座位', 1, 1000),
+    },
+    examples: ['fdu rooms free --building H2', 'fdu rooms free --building H3,H4 --date 2026-11-10 --from 6 --to 8'],
+    async run(ctx, a) {
+      const today = shanghaiDay(ctx.now());
+      const day = a.date ?? today;
+      const out = [];
+      for (const b of buildingList(a.building)) {
+        const page = await roomsDayPage(ctx, b, day);
+        const nowHm = new Date(ctx.now() + 8 * 3_600_000).toISOString().slice(11, 16);
+        const from = a.from ?? (day === today ? periodAt(page.periods, nowHm) : 1);
+        if (from === undefined) { out.push({ building: b, note: '今天的课都上完了（第十四节已过）。' }); continue; }
+        const to = Math.min(a.to ?? (a.from === undefined && day !== today ? 14 : from + 1), page.periods.length);
+        if (to < from) throw new FduError('BAD_ARGS', '--to 不能小于 --from。');
+        const free = freeRooms(page, from, to, { minCapacity: a.minSeats });
+        out.push({ building: b, date: page.date ?? day, week: page.week, periods: `第 ${from === to ? from : `${from}–${to}`} 节（${periodSpan(page.periods, from, to)}）`, freeCount: free.length, free });
+      }
+      return { results: out, note: '「不开放自修」等标注也算占用；临时借用以学校系统为准。' };
+    },
+  }),
+  op({
+    name: 'rooms.day', summary: '一栋楼一天的教室安排：每间教室哪几节有什么课或活动、哪几节空着。', login: 'uis', effect: 'read',
+    params: {
+      building: z.string().min(1).describe(`教学楼代码：${BUILDINGS.join('、')}`),
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('日期 YYYY-MM-DD，默认今天'),
+      room: z.string().optional().describe('只看某间教室，如 H2101'),
+    },
+    async run(ctx, a) {
+      const [b] = buildingList(a.building);
+      const page = await roomsDayPage(ctx, b, a.date ?? shanghaiDay(ctx.now()));
+      const rooms = page.rooms.filter((r) => !a.room || r.room.toUpperCase() === a.room.toUpperCase()).map((r) => {
+        const used = blocks(r).map((x) => ({ periods: `${x.from}-${x.to}`, time: periodSpan(page.periods, x.from, x.to), ...x.occupant }));
+        const freeRanges: string[] = [];
+        let start = 0;
+        r.periods.forEach((o, i) => {
+          if (!o && !start) start = i + 1;
+          if ((o || i === r.periods.length - 1) && start) { const end = o ? i : i + 1; freeRanges.push(`第 ${start === end ? start : `${start}–${end}`} 节（${periodSpan(page.periods, start, end)}）`); start = 0; }
+        });
+        return { room: r.room, capacity: r.capacity, schedule: used, free: freeRanges };
+      });
+      if (a.room && !rooms.length) throw new FduError('NOT_FOUND', `${b} 里没有教室 ${a.room}。`);
+      return { building: b, date: page.date, week: page.week, periods: page.periods, rooms };
+    },
+  }),
+
   op({
     name: 'library.login', summary: '登录图书馆「我的借阅」：打开图书馆页面，点「登录」（走统一身份认证，已登录复旦账号时一般不用再输密码），看到借阅信息后窗口会自动关闭。',
     login: 'none', effect: 'auth', mcp: false, params: {},

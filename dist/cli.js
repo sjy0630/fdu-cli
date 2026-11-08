@@ -2831,8 +2831,99 @@ async function venueCalendar(getJson, venueId, from, to) {
   return days;
 }
 
-// src/services/capture.ts
+// src/services/rooms.ts
 import { load as load7 } from "cheerio";
+var ROOMS_ORIGIN = "http://10.64.130.6";
+var BUILDINGS = ["H2", "H3", "H4", "H5", "H6", "HGX", "HQ", "JA", "JB", "F1", "F2", "Z2"];
+function roomsDay(day) {
+  const [y, m, d] = day.split("-").map(Number);
+  return `${y}-${m}-${d}`;
+}
+function dayPageUrl(building, day, opts = { webvpn: true }) {
+  const url = `${ROOMS_ORIGIN}/day.asp?${new URLSearchParams({ b: building, c: "", p: "", day: roomsDay(day) })}`;
+  return opts.webvpn === false ? url : toWebvpnUrl(url);
+}
+function occupant($, td) {
+  const tags = td.find("span.tag").map((_, el) => $(el).text().trim()).get().filter(Boolean);
+  const copy = td.clone();
+  copy.find("span.tag").remove();
+  const text = copy.text().replace(/\s+/g, " ").trim();
+  if (!text && !tags.length) return null;
+  const m = /^([A-Z]{2,}[A-Z0-9.]*\d[\w.]*)?\s*\[(.+?)\]\s*(?:\(([^)]*)\))?\s*(?:\{(\d+)人\})?/.exec(text);
+  const borrow = tags.includes("\u4E34\u501F") || /临借/.test(text);
+  if (m && (m[1] || m[2]) && !borrow) {
+    return {
+      kind: "course",
+      tags,
+      text,
+      ...m[1] ? { code: m[1] } : {},
+      name: m[2],
+      ...m[3] ? { teacher: m[3] } : {},
+      ...m[4] ? { people: Number(m[4]) } : {}
+    };
+  }
+  return { kind: borrow ? "borrow" : "other", tags, text, ...borrow ? { name: text.replace(/^临借\s*/, "") } : {} };
+}
+function parseDayPage(html) {
+  const $ = load7(html);
+  const periods = [];
+  $('td[id^="td0"]').each((_, el) => {
+    const id = $(el).attr("id") ?? "";
+    const no = Number(id.replace(/^td0*/, ""));
+    const cells = $(el).find("table td").map((_i, x) => $(x).text().trim()).get();
+    const times = cells.filter((t) => /^\d{1,2}:\d{2}$/.test(t));
+    if (no >= 1 && no <= 20 && times.length >= 2 && !periods.some((p) => p.no === no)) periods.push({ no, start: times[0].padStart(5, "0"), end: times[1].padStart(5, "0") });
+  });
+  periods.sort((a, b) => a.no - b.no);
+  if (!periods.length) {
+    if (/统一身份认证|authCenter|idp\/authn/i.test(html)) throw new FduError("NEED_LOGIN", "\u7A7A\u6559\u5BA4\u7CFB\u7EDF\u9700\u8981\u767B\u5F55\u3002", "\u8FD0\u884C `fdu rooms login`\uFF0C\u5728\u6253\u5F00\u7684\u7A97\u53E3\u91CC\u767B\u5F55\u4E00\u6B21\u3002");
+    throw new FduError("FORMAT_CHANGED", "\u7A7A\u6559\u5BA4\u9875\u9762\u7684\u683C\u5F0F\u548C\u9884\u671F\u4E0D\u540C\uFF0C\u5B66\u6821\u9875\u9762\u53EF\u80FD\u66F4\u65B0\u4E86\u3002");
+  }
+  const rooms = [];
+  $("tr").each((_, tr) => {
+    const tds = $(tr).children("td");
+    const first2 = tds.first();
+    const link = first2.find('a[id^="rt"]').first();
+    if (!/^r\d+$/.test(first2.attr("id") ?? "") || !link.length) return;
+    const room = link.text().trim();
+    const cap = Number(tds.eq(1).find('[id^="cap"]').first().text().trim() || tds.eq(1).text().trim().match(/\d+/)?.[0]);
+    const cells = tds.slice(2, 2 + periods.length).toArray().map((td) => occupant($, $(td)));
+    rooms.push({ room, ...Number.isFinite(cap) && cap > 0 ? { capacity: cap } : {}, periods: cells });
+  });
+  const dateText = $("#datetime").attr("value");
+  const date = dateText && /^\d{4}\/\d{1,2}\/\d{1,2}$/.test(dateText) ? dateText.split("/").map((x, i) => i ? x.padStart(2, "0") : x).join("-") : void 0;
+  const weekTitle = $('span[title^="\u7B2C"][title$="\u6559\u5B66\u5468"]').attr("title");
+  const week = weekTitle ? Number(/第(\d+)教学周/.exec(weekTitle)?.[1]) : void 0;
+  return { ...date ? { date } : {}, ...week ? { week } : {}, periods, rooms };
+}
+function periodSpan(periods, from, to) {
+  const a = periods.find((p) => p.no === from);
+  const b = periods.find((p) => p.no === to);
+  return a && b ? `${a.start}-${b.end}` : "";
+}
+function periodAt(periods, hhmm) {
+  return periods.find((p) => hhmm <= p.end)?.no;
+}
+function blocks(room) {
+  const out = [];
+  room.periods.forEach((o, i) => {
+    if (!o) return;
+    const last = out[out.length - 1];
+    if (last && last.to === i && last.occupant.text === o.text) last.to = i + 1;
+    else out.push({ from: i + 1, to: i + 1, occupant: o });
+  });
+  return out;
+}
+function freeRooms(page, from, to, opts = {}) {
+  return page.rooms.filter((r) => r.periods.slice(from - 1, to).every((o) => !o) && (opts.minCapacity === void 0 || (r.capacity ?? 0) >= opts.minCapacity)).map((r) => {
+    const nextIdx = r.periods.findIndex((o, i) => i >= to && !!o);
+    const next = nextIdx >= 0 ? page.periods[nextIdx] : void 0;
+    return { room: r.room, capacity: r.capacity, freeUntil: next ? `\u7B2C ${next.no} \u8282\uFF08${next.start}\uFF09\u524D` : "\u4ECA\u5929\u4E4B\u540E\u90FD\u7A7A\u7740" };
+  }).sort((a, b) => (b.capacity ?? 0) - (a.capacity ?? 0));
+}
+
+// src/services/capture.ts
+import { load as load8 } from "cheerio";
 var MAX_DEPTH = 6;
 function shapeOf(value, depth = 0) {
   if (value === null) return "null";
@@ -2855,7 +2946,7 @@ function shapeOf(value, depth = 0) {
   return typeof value;
 }
 function htmlOutline(html) {
-  const $ = load7(html);
+  const $ = load8(html);
   const tables = $("table").map((_, t) => [$(t).find("th").map((_i, th) => $(th).text().replace(/\s+/g, " ").trim()).get().filter(Boolean).slice(0, 20)]).get();
   const forms = $("form").map((_, f) => ({ action: $(f).attr("action")?.split("?")[0], fields: $(f).find("input[name],select[name],textarea[name]").map((_i, x) => $(x).attr("name")).get().filter((n) => !/csrf|token|password/i.test(n)) })).get();
   return { title: $("title").first().text().trim() || void 0, tables: tables.filter((t) => t.length), forms };
@@ -3146,6 +3237,22 @@ async function withLibrary(ctx, work) {
   if (failure) throw failure;
   if (!result) throw new FduError("UPSTREAM", "\u56FE\u4E66\u9986\u9875\u9762\u6CA1\u6709\u6253\u5F00\u3002", "\u7A0D\u540E\u518D\u8BD5\uFF1B\u4E5F\u53EF\u4EE5\u76F4\u63A5\u6253\u5F00 opac.fudan.edu.cn \u67E5\u770B\u3002");
   return result.value;
+}
+var ROOMS_LOGIN_HINT = "\u8FD0\u884C `fdu rooms login`\uFF0C\u5728\u6253\u5F00\u7684\u7A97\u53E3\u91CC\u767B\u5F55\u4E00\u6B21\u7A7A\u6559\u5BA4\u7CFB\u7EDF\u3002";
+async function roomsDayPage(ctx, building, day) {
+  if (!ctx.session.hasState()) throw new NeedLoginError("jwfw");
+  await ensureWebvpn(ctx.session);
+  const r = await ctx.session.browserFetch(dayPageUrl(building, day), { timeoutMs: 3e4 });
+  if (/\/urp\/|authCenter|\/idp\//.test(r.url)) throw new FduError("NEED_LOGIN", "\u7A7A\u6559\u5BA4\u7CFB\u7EDF\u9700\u8981\u767B\u5F55\u3002", ROOMS_LOGIN_HINT);
+  if (/webvpn\.fudan\.edu\.cn\/login/.test(r.url)) throw new FduError("NEED_LOGIN", "WebVPN \u767B\u5F55\u5DF2\u8FC7\u671F\u3002", "\u8FD0\u884C `fdu login --webvpn`\u3002");
+  return parseDayPage(r.text);
+}
+function buildingList(value) {
+  const list2 = value.split(/[,，\s]+/).map((b) => b.trim().toUpperCase()).filter(Boolean);
+  const bad = list2.filter((b) => !BUILDINGS.includes(b));
+  if (bad.length) throw new FduError("BAD_ARGS", `\u4E0D\u8BA4\u8BC6\u7684\u6559\u5B66\u697C\uFF1A${bad.join("\u3001")}\u3002`, `\u53EF\u9009\uFF1A${BUILDINGS.join("\u3001")}\uFF08H2 = \u4E8C\u6559\uFF0CHGX = \u5149\u534E\u697C\uFF09\u3002`);
+  if (list2.length > 6) throw new FduError("BAD_ARGS", "\u4E00\u6B21\u6700\u591A\u67E5 6 \u680B\u697C\u3002");
+  return list2;
 }
 function overviewDeps(ctx) {
   const reader = ctx.session.reader("jwfw");
@@ -3773,6 +3880,89 @@ var OPS = [
         const r = await ctx.session.raw(url, { method: "POST" });
         return { status: r.status, text: r.text };
       });
+    }
+  }),
+  // ======================= 空教室 =======================
+  op({
+    name: "rooms.login",
+    summary: "\u767B\u5F55\u7A7A\u6559\u5BA4\u7CFB\u7EDF\uFF08\u5B66\u6821\u591A\u5A92\u4F53\u6559\u5BA4\u7684\u300C\u5728\u7EBF\u8BFE\u8868\u300D\uFF0C\u6821\u5916\u7ECF WebVPN\uFF09\uFF1A\u6253\u5F00\u7A97\u53E3\uFF0C\u6309\u63D0\u793A\u767B\u5F55\uFF0C\u770B\u5230\u8BFE\u8868\u540E\u7A97\u53E3\u81EA\u52A8\u5173\u95ED\u3002",
+    login: "none",
+    effect: "auth",
+    mcp: false,
+    params: {},
+    async run(ctx) {
+      if (!ctx.session.hasState()) throw new NeedLoginError("jwfw");
+      await ensureWebvpn(ctx.session, { headless: false });
+      ctx.log("\u5DF2\u6253\u5F00\u7A7A\u6559\u5BA4\u7CFB\u7EDF\uFF1A\u5982\u679C\u8981\u6C42\u767B\u5F55\uFF0C\u8BF7\u5728\u7A97\u53E3\u91CC\u767B\u5F55\uFF1B\u770B\u5230\u8BFE\u8868\u540E\u7A97\u53E3\u4F1A\u81EA\u52A8\u5173\u95ED\u3002");
+      let ok = false;
+      await ctx.session.withPage(toWebvpnUrl(`${ROOMS_ORIGIN}/day.asp?b=H2`), (_page, html) => ok = /statusTable_1/.test(html) && /td001/.test(html), { headless: false, timeoutMs: 3e5 });
+      if (!ok) throw new FduError("NEED_LOGIN", "\u6CA1\u6709\u5B8C\u6210\u7A7A\u6559\u5BA4\u7CFB\u7EDF\u7684\u767B\u5F55\u3002", ROOMS_LOGIN_HINT);
+      await ctx.session.save();
+      return { loggedIn: true };
+    }
+  }),
+  op({
+    name: "rooms.free",
+    summary: "\u7A7A\u6559\u5BA4\uFF1A\u67D0\u680B\u697C\u67D0\u5929\u67D0\u51E0\u8282\u90FD\u7A7A\u7740\u7684\u6559\u5BA4\uFF08\u6309\u5EA7\u4F4D\u4ECE\u591A\u5230\u5C11\uFF09\uFF0C\u4EE5\u53CA\u7A7A\u5230\u4EC0\u4E48\u65F6\u5019\u3002\u9ED8\u8BA4\u4ECA\u5929\u3001\u4ECE\u73B0\u5728\u8FD9\u8282\u8D77\u4E24\u8282\u3002\u6570\u636E\u6765\u81EA\u5B66\u6821\u591A\u5A92\u4F53\u6559\u5BA4\u7CFB\u7EDF\u7684\u5728\u7EBF\u8BFE\u8868\u3002",
+    login: "uis",
+    effect: "read",
+    params: {
+      building: z.string().min(1).describe(`\u6559\u5B66\u697C\u4EE3\u7801\uFF0C\u591A\u4E2A\u7528\u9017\u53F7\u5206\u5F00\uFF1A${BUILDINGS.join("\u3001")}\uFF08H2 = \u4E8C\u6559\uFF0CHGX = \u5149\u534E\u697C\uFF09`),
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("\u65E5\u671F YYYY-MM-DD\uFF0C\u9ED8\u8BA4\u4ECA\u5929"),
+      from: int2("\u4ECE\u7B2C\u51E0\u8282\uFF081\u201314\uFF09\uFF0C\u9ED8\u8BA4\u73B0\u5728\u8FD9\u4E00\u8282", 1, 14),
+      to: int2("\u5230\u7B2C\u51E0\u8282\uFF08\u542B\uFF09\uFF0C\u9ED8\u8BA4 from \u7684\u4E0B\u4E00\u8282", 1, 14),
+      minSeats: int2("\u81F3\u5C11\u591A\u5C11\u5EA7\u4F4D", 1, 1e3)
+    },
+    examples: ["fdu rooms free --building H2", "fdu rooms free --building H3,H4 --date 2026-11-10 --from 6 --to 8"],
+    async run(ctx, a) {
+      const today = shanghaiDay(ctx.now());
+      const day = a.date ?? today;
+      const out = [];
+      for (const b of buildingList(a.building)) {
+        const page = await roomsDayPage(ctx, b, day);
+        const nowHm = new Date(ctx.now() + 8 * 36e5).toISOString().slice(11, 16);
+        const from = a.from ?? (day === today ? periodAt(page.periods, nowHm) : 1);
+        if (from === void 0) {
+          out.push({ building: b, note: "\u4ECA\u5929\u7684\u8BFE\u90FD\u4E0A\u5B8C\u4E86\uFF08\u7B2C\u5341\u56DB\u8282\u5DF2\u8FC7\uFF09\u3002" });
+          continue;
+        }
+        const to = Math.min(a.to ?? (a.from === void 0 && day !== today ? 14 : from + 1), page.periods.length);
+        if (to < from) throw new FduError("BAD_ARGS", "--to \u4E0D\u80FD\u5C0F\u4E8E --from\u3002");
+        const free = freeRooms(page, from, to, { minCapacity: a.minSeats });
+        out.push({ building: b, date: page.date ?? day, week: page.week, periods: `\u7B2C ${from === to ? from : `${from}\u2013${to}`} \u8282\uFF08${periodSpan(page.periods, from, to)}\uFF09`, freeCount: free.length, free });
+      }
+      return { results: out, note: "\u300C\u4E0D\u5F00\u653E\u81EA\u4FEE\u300D\u7B49\u6807\u6CE8\u4E5F\u7B97\u5360\u7528\uFF1B\u4E34\u65F6\u501F\u7528\u4EE5\u5B66\u6821\u7CFB\u7EDF\u4E3A\u51C6\u3002" };
+    }
+  }),
+  op({
+    name: "rooms.day",
+    summary: "\u4E00\u680B\u697C\u4E00\u5929\u7684\u6559\u5BA4\u5B89\u6392\uFF1A\u6BCF\u95F4\u6559\u5BA4\u54EA\u51E0\u8282\u6709\u4EC0\u4E48\u8BFE\u6216\u6D3B\u52A8\u3001\u54EA\u51E0\u8282\u7A7A\u7740\u3002",
+    login: "uis",
+    effect: "read",
+    params: {
+      building: z.string().min(1).describe(`\u6559\u5B66\u697C\u4EE3\u7801\uFF1A${BUILDINGS.join("\u3001")}`),
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("\u65E5\u671F YYYY-MM-DD\uFF0C\u9ED8\u8BA4\u4ECA\u5929"),
+      room: z.string().optional().describe("\u53EA\u770B\u67D0\u95F4\u6559\u5BA4\uFF0C\u5982 H2101")
+    },
+    async run(ctx, a) {
+      const [b] = buildingList(a.building);
+      const page = await roomsDayPage(ctx, b, a.date ?? shanghaiDay(ctx.now()));
+      const rooms = page.rooms.filter((r) => !a.room || r.room.toUpperCase() === a.room.toUpperCase()).map((r) => {
+        const used = blocks(r).map((x) => ({ periods: `${x.from}-${x.to}`, time: periodSpan(page.periods, x.from, x.to), ...x.occupant }));
+        const freeRanges = [];
+        let start = 0;
+        r.periods.forEach((o, i) => {
+          if (!o && !start) start = i + 1;
+          if ((o || i === r.periods.length - 1) && start) {
+            const end = o ? i : i + 1;
+            freeRanges.push(`\u7B2C ${start === end ? start : `${start}\u2013${end}`} \u8282\uFF08${periodSpan(page.periods, start, end)}\uFF09`);
+            start = 0;
+          }
+        });
+        return { room: r.room, capacity: r.capacity, schedule: used, free: freeRanges };
+      });
+      if (a.room && !rooms.length) throw new FduError("NOT_FOUND", `${b} \u91CC\u6CA1\u6709\u6559\u5BA4 ${a.room}\u3002`);
+      return { building: b, date: page.date, week: page.week, periods: page.periods, rooms };
     }
   }),
   op({
