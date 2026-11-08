@@ -78,6 +78,8 @@ args = ["mcp"]
 | 图书馆借阅 | `fdu library loans / history` | 在借的书、应还日期、还剩几天、借阅历史 | 复旦账号 + `fdu library login` |
 | 学校通知 | `fdu notices sources / list / read` | 教务处、研究生院、各院系官网的通知 | 不用 |
 | 体育场馆 | `fdu venue list / free` | 各场馆每个时段还有哪些场地空着 | 复旦账号 |
+| 食堂 | `fdu canteen crowd` | 各食堂现在的就餐人数和容量 | 复旦账号 |
+| 校车 | `fdu bus schedule` | 校区间校车时刻表（工作日 / 节假日） | 复旦账号 |
 | 宿舍 | `fdu dorm electricity` | 剩余电量 | 复旦账号 |
 | 树洞、蛋壳课评 | `fdu hole search / read / latest`、`fdu danke search / reviews` | 树洞（旦挞茶楼）帖子；蛋壳课评（danke.fduhole.com）的课程评分和评价 | 树洞账号 |
 | 学生邮箱 | `fdu mail list / read` | 收件箱（只读，不改已读状态） | 客户端专用密码 |

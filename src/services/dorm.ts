@@ -26,23 +26,28 @@ export function parseElectricity(body: string): DormElectricity {
 }
 
 /**
+ * 读 zlapp 上的接口（宿舍电量、校车等共用）。
  * 先用后台请求走单点登录；统一身份认证最后一步靠页面脚本跳回，后台请求走不完时，
- * 在隐藏窗口里打开单点登录入口（脚本会执行），拿到电量系统的会话后再读。
+ * 在隐藏窗口里打开单点登录入口（脚本会执行），拿到会话后再读。
  */
-export async function readElectricity(reader: CampusReader): Promise<DormElectricity> {
+export async function readZlapp(reader: CampusReader, url: string, init?: Parameters<CampusReader['getText']>[1]): Promise<string> {
   const notLoggedIn = (r: { url: string; text: string }) => /\/uc\/wap\/login/.test(r.url) || /<html/i.test(r.text.slice(0, 300));
   await reader.getText(ZLAPP_SSO).catch(() => undefined);
-  let res = await reader.getText(ZLAPP_ELEC);
+  let res = await reader.getText(url, init);
   if (notLoggedIn(res) && reader.render) {
-    await reader.render(ZLAPP_SSO, (_html, url) => {
+    await reader.render(ZLAPP_SSO, (_html, u) => {
       try {
-        const u = new URL(url);
-        return u.hostname === 'zlapp.fudan.edu.cn' && !u.pathname.includes('/uc/wap/login') && !u.pathname.includes('/sso/');
+        const x = new URL(u);
+        return x.hostname === 'zlapp.fudan.edu.cn' && !x.pathname.includes('/uc/wap/login') && !x.pathname.includes('/sso/');
       } catch { return false; }
     });
-    res = await reader.getText(ZLAPP_ELEC);
+    res = await reader.getText(url, init);
   }
   // 还是被带到它自己的登录页：复旦账号登录过期
   if (notLoggedIn(res)) throw new NeedLoginError('jwfw');
-  return parseElectricity(res.text);
+  return res.text;
+}
+
+export async function readElectricity(reader: CampusReader): Promise<DormElectricity> {
+  return parseElectricity(await readZlapp(reader, ZLAPP_ELEC));
 }

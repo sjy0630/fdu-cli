@@ -1,5 +1,10 @@
 # 更新记录
 
+## 未发布
+
+- `fdu canteen crowd`：各食堂现在的就餐人数和容量
+- `fdu bus schedule`：校区间校车时刻表（工作日 / 节假日，可按出发、到达校区筛选）
+
 ## 0.1.1 — 2026-11-08
 
 - 发布到 npm：`npm install -g fdu-cli`

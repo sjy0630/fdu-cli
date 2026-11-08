@@ -534,6 +534,46 @@ fdu venue free --venue "北区 羽毛球"
 fdu venue free --venue 正大 --date 2026-11-10 --days 3
 ```
 
+## 食堂
+
+各食堂现在的就餐人数
+
+### `fdu canteen crowd`
+
+各食堂现在的就餐人数和容量（ratio = 人数 / 容量）。不在用餐时段时 open 为 false，并附上学校页面的说明。
+
+登录：复旦账号 · 只读 · MCP：`canteen_crowd`
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `--campus` | string |  | 只看某个校区：邯郸、枫林、江湾、张江 |
+
+```bash
+fdu canteen crowd
+fdu canteen crowd --campus 邯郸
+```
+
+## 校车
+
+校区间校车时刻表
+
+### `fdu bus schedule`
+
+校区间校车时刻表，按时间排序。fromTime / toTime 是学校时刻表里起点、终点校区一栏的时刻；bothWays 表示两个方向都发车。
+
+登录：复旦账号 · 只读 · MCP：`bus_schedule`
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `--holiday` | boolean |  | 节假日时刻表（默认工作日） |
+| `--from` | string |  | 出发校区：邯郸、江湾、枫林、张江 |
+| `--to` | string |  | 到达校区 |
+
+```bash
+fdu bus schedule --from 邯郸 --to 江湾
+fdu bus schedule --holiday
+```
+
 ## 宿舍
 
 剩余电量

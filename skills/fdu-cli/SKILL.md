@@ -1,6 +1,6 @@
 ---
 name: fdu-cli
-description: 查询复旦大学校园服务：eLearning 课程 / 作业 / DDL / 公告 / 课件下载，iCourse 课程回放和课堂文字稿，教务系统课表 / 考试 / 成绩 / 绩点排名 / 培养方案 / 选课结果，校园卡余额和消费记录，体育场馆空闲时段，空教室，宿舍电量，图书馆人数和文献检索，学校和院系官网通知，树洞和蛋壳课评，学生邮箱。用户问到自己在复旦的课程、作业、考试、成绩、校园生活，或要下载课件、找通知、找文献时使用。
+description: 查询复旦大学校园服务：eLearning 课程 / 作业 / DDL / 公告 / 课件下载，iCourse 课程回放和课堂文字稿，教务系统课表 / 考试 / 成绩 / 绩点排名 / 培养方案 / 选课结果，校园卡余额和消费记录，体育场馆空闲时段，食堂人数，校车时刻表，空教室，宿舍电量，图书馆人数和文献检索，学校和院系官网通知，树洞和蛋壳课评，学生邮箱。用户问到自己在复旦的课程、作业、考试、成绩、校园生活，或要下载课件、找通知、找文献时使用。
 ---
 
 # 复旦校园服务（fdu-cli）
@@ -57,6 +57,8 @@ description: 查询复旦大学校园服务：eLearning 课程 / 作业 / DDL / 
 | 找论文 | `fdu library search --query "..." --year-from 2022`，只依据摘要总结，给出 DOI 或链接 |
 | 哪个图书馆人少 | `fdu library seats` |
 | 找教室自习 / 哪间教室合适 / 某间教室今天的安排 | `fdu rooms day --building H2`（H2 二教、HGX 光华楼……）：每间教室的楼层、座位、现在的状态、全天安排和空闲时段，按用户的需求（离哪近、要多大、要待到几点、避开下课人流）自己挑；全校先用 `fdu rooms day --brief` 看大概。只要空教室名单也可以用 `fdu rooms free`。需要登录时请用户运行 `fdu rooms login` |
+| 去哪吃饭 / 食堂人多吗 | `fdu canteen crowd --campus 邯郸`（只有用餐时段有数据，open 为 false 时照实告诉用户） |
+| 下一班校车几点 | `fdu bus schedule --from 邯郸 --to 江湾`（节假日加 `--holiday`），结合当前时间挑出最近的几班 |
 | 去哪打球 / 场馆还有空吗 | `fdu venue free --venue "北区 羽毛球" --days 3`（只能看，预约要用户自己去 booking.fudan.edu.cn） |
 | 校园卡 / 电费 | `fdu card balance`、`fdu dorm electricity` |
 | 这个月吃饭花了多少 | `fdu card transactions --from 2026-11-01 --limit 0`（只要统计，不要明细） |

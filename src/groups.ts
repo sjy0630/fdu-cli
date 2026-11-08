@@ -10,6 +10,8 @@ export const GROUPS: { id: string; name: string; desc: string }[] = [
   { id: 'library', name: '图书馆', desc: '在馆人数、文献检索、在借的书和借阅历史' },
   { id: 'notices', name: '学校通知', desc: '教务处、研究生院、各院系官网的通知' },
   { id: 'venue', name: '体育场馆', desc: '各场馆每个时段还有哪些场地空着（只看，不预约）' },
+  { id: 'canteen', name: '食堂', desc: '各食堂现在的就餐人数' },
+  { id: 'bus', name: '校车', desc: '校区间校车时刻表' },
   { id: 'dorm', name: '宿舍', desc: '剩余电量' },
   { id: 'hole', name: '树洞', desc: '搜索和阅读树洞帖子（需要树洞账号）' },
   { id: 'danke', name: '蛋壳课评', desc: '课程评价（需要树洞账号）' },

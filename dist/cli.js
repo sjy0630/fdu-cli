@@ -892,8 +892,8 @@ async function readSelectedCourses(reader, which = "current") {
   if (reader.render) {
     try {
       const html = await reader.render(COURSE_SELECT_PAGE, (h) => /选课|轮次/.test(h) && !/加载中/.test(h));
-      const text = load2(html)("body").text().replace(/\s+/g, " ").trim();
-      const m = text.match(/.{0,40}(?:轮次|选课时间|开放时间|第[一二三四]轮).{0,200}/);
+      const text2 = load2(html)("body").text().replace(/\s+/g, " ").trim();
+      const m = text2.match(/.{0,40}(?:轮次|选课时间|开放时间|第[一二三四]轮).{0,200}/);
       rounds = m?.[0];
     } catch {
     }
@@ -913,12 +913,12 @@ function parseLibrary(body3) {
     throw new Error("\u56FE\u4E66\u9986\u63A5\u53E3\u8FD4\u56DE\u7684\u683C\u5F0F\u548C\u9884\u671F\u4E0D\u540C\u3002");
   }
   if (String(data?.code) !== "1" || !Array.isArray(data.data)) throw new Error("\u56FE\u4E66\u9986\u4EBA\u6570\u6682\u65F6\u67E5\u4E0D\u5230\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5\u3002");
-  const num3 = (v) => typeof v === "number" || typeof v === "string" && /^\d+$/.test(v.trim()) ? Number(v) : null;
+  const num4 = (v) => typeof v === "number" || typeof v === "string" && /^\d+$/.test(v.trim()) ? Number(v) : null;
   return data.data.flatMap((x) => {
     const r = x;
     const name = typeof r.campusName === "string" ? r.campusName.trim() : "";
     if (!name) return [];
-    return [{ name, inside: num3(r.inNum), remaining: num3(r.canInNumb), openTime: typeof r.libraryOpenTime === "string" && r.libraryOpenTime.trim() ? r.libraryOpenTime.trim() : void 0 }];
+    return [{ name, inside: num4(r.inNum), remaining: num4(r.canInNumb), openTime: typeof r.libraryOpenTime === "string" && r.libraryOpenTime.trim() ? r.libraryOpenTime.trim() : void 0 }];
   });
 }
 async function readLibrary(post) {
@@ -932,8 +932,8 @@ function parseCardBalance(html) {
     $(".payway-box-bottom-item p").first().text(),
     $('[class*="balance"]').first().text()
   ].map((t) => t.replace(/\s/g, ""));
-  for (const text of candidates) {
-    const m = /^(?:[¥￥]|CNY|RMB|余额[:：]?)?(-?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?|-?\d+(?:\.\d{1,2})?)元?$/i.exec(text);
+  for (const text2 of candidates) {
+    const m = /^(?:[¥￥]|CNY|RMB|余额[:：]?)?(-?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?|-?\d+(?:\.\d{1,2})?)元?$/i.exec(text2);
     if (m) return Number(m[1].replace(/,/g, ""));
   }
   throw new Error("\u6CA1\u6709\u5728\u6821\u56ED\u5361\u9875\u9762\u4E0A\u627E\u5230\u4F59\u989D\uFF0C\u5B66\u6821\u9875\u9762\u53EF\u80FD\u66F4\u65B0\u4E86\u3002");
@@ -957,34 +957,133 @@ function parseElectricity(body3) {
   }
   if (Number(data.e) !== 0 || !data.d) throw new Error(data.m ? `\u7535\u91CF\u7CFB\u7EDF\uFF1A${data.m}` : "\u7535\u91CF\u7CFB\u7EDF\u6CA1\u6709\u8FD4\u56DE\u5BBF\u820D\u4FE1\u606F\uFF08\u53EF\u80FD\u6CA1\u6709\u7ED1\u5B9A\u5BBF\u820D\uFF09\u3002");
   const d = data.d;
-  const num3 = (v) => v === null || v === void 0 || v === "" ? void 0 : Number(v);
-  const remaining = num3(d.fj_surplus);
+  const num4 = (v) => v === null || v === void 0 || v === "" ? void 0 : Number(v);
+  const remaining = num4(d.fj_surplus);
   if (remaining === void 0 || !Number.isFinite(remaining)) throw new Error("\u7535\u91CF\u7CFB\u7EDF\u6CA1\u6709\u8FD4\u56DE\u5269\u4F59\u7535\u91CF\u3002");
   return {
     room: [d.xq, d.ssmc, d.fjmc].filter((x) => x !== null && x !== void 0 && x !== "").join(" "),
     remainingKwh: remaining,
-    usedKwh: num3(d.fj_used),
-    totalKwh: num3(d.fj_all),
+    usedKwh: num4(d.fj_used),
+    totalKwh: num4(d.fj_all),
     updatedAt: typeof d.fj_update_time === "string" ? d.fj_update_time : void 0
   };
 }
-async function readElectricity(reader) {
+async function readZlapp(reader, url, init) {
   const notLoggedIn = (r) => /\/uc\/wap\/login/.test(r.url) || /<html/i.test(r.text.slice(0, 300));
   await reader.getText(ZLAPP_SSO).catch(() => void 0);
-  let res = await reader.getText(ZLAPP_ELEC);
+  let res = await reader.getText(url, init);
   if (notLoggedIn(res) && reader.render) {
-    await reader.render(ZLAPP_SSO, (_html, url) => {
+    await reader.render(ZLAPP_SSO, (_html, u) => {
       try {
-        const u = new URL(url);
-        return u.hostname === "zlapp.fudan.edu.cn" && !u.pathname.includes("/uc/wap/login") && !u.pathname.includes("/sso/");
+        const x = new URL(u);
+        return x.hostname === "zlapp.fudan.edu.cn" && !x.pathname.includes("/uc/wap/login") && !x.pathname.includes("/sso/");
       } catch {
         return false;
       }
     });
-    res = await reader.getText(ZLAPP_ELEC);
+    res = await reader.getText(url, init);
   }
   if (notLoggedIn(res)) throw new NeedLoginError("jwfw");
-  return parseElectricity(res.text);
+  return res.text;
+}
+async function readElectricity(reader) {
+  return parseElectricity(await readZlapp(reader, ZLAPP_ELEC));
+}
+
+// src/services/bus.ts
+var BUS_URL = "https://zlapp.fudan.edu.cn/fudanbus/wap/default/lists";
+var hhmm = (v) => {
+  const m = /^(\d{1,2})[.:：](\d{2})$/.exec(String(v ?? "").trim());
+  return m ? `${m[1].padStart(2, "0")}:${m[2]}` : null;
+};
+var campus = (v) => String(v ?? "").trim().replace(/校区$/, "");
+function parseBus(body3) {
+  let data;
+  try {
+    data = JSON.parse(body3);
+  } catch {
+    throw new Error("\u6821\u8F66\u7CFB\u7EDF\u8FD4\u56DE\u7684\u683C\u5F0F\u548C\u9884\u671F\u4E0D\u540C\u3002");
+  }
+  if (Number(data.e) !== 0 || !Array.isArray(data.d?.data)) throw new Error(typeof data.m === "string" && data.m ? `\u6821\u8F66\u7CFB\u7EDF\uFF1A${data.m}` : "\u6821\u8F66\u7CFB\u7EDF\u6CA1\u6709\u8FD4\u56DE\u65F6\u523B\u8868\u3002");
+  const trips = [];
+  for (const route of data.d.data) {
+    if (!Array.isArray(route?.lists)) continue;
+    for (const raw of route.lists) {
+      const start = campus(raw.start), end = campus(raw.end);
+      const st = hhmm(raw.stime), et = hhmm(raw.etime);
+      if (!start || !end || !st && !et) continue;
+      const arrow = Number(raw.arrow);
+      trips.push(arrow === 2 ? { from: end, to: start, fromTime: et, toTime: st, bothWays: false } : { from: start, to: end, fromTime: st, toTime: et, bothWays: arrow === 1 });
+    }
+  }
+  const key = (t) => t.fromTime ?? t.toTime ?? "";
+  return trips.sort((a, b) => key(a).localeCompare(key(b)));
+}
+function filterBus(trips, opts) {
+  const hit = (name, q) => !q || name.includes(campus(q));
+  return trips.flatMap((t) => {
+    if (hit(t.from, opts.from) && hit(t.to, opts.to)) return [t];
+    if (t.bothWays && hit(t.to, opts.from) && hit(t.from, opts.to)) return [{ from: t.to, to: t.from, fromTime: t.toTime, toTime: t.fromTime, bothWays: true }];
+    return [];
+  });
+}
+async function readBus(reader, holiday) {
+  const text2 = await readZlapp(reader, BUS_URL, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded; charset=UTF-8" },
+    body: `holiday=${holiday ? 1 : 0}`
+  });
+  return parseBus(text2);
+}
+
+// src/services/canteen.ts
+var CANTEEN_URL = "https://my.fudan.edu.cn/simple_list/stqk";
+var CAMPUSES = ["\u90AF\u90F8", "\u67AB\u6797", "\u6C5F\u6E7E", "\u5F20\u6C5F"];
+var text = (html) => html.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
+function arrays(script) {
+  const out = [];
+  for (const m of script.matchAll(/\[[^[\]]*\]/g)) {
+    try {
+      const v = JSON.parse(m[0].replace(/\\n/g, " ").replace(/'/g, '"'));
+      if (Array.isArray(v)) out.push(v);
+    } catch {
+    }
+  }
+  return out;
+}
+var num = (v) => v === "" || v === null || v === void 0 || !Number.isFinite(Number(v)) ? null : Number(v);
+function parseCanteen(html) {
+  const scripts = [...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/gi)].map((m) => m[1]);
+  for (const script of scripts) {
+    const list2 = arrays(script);
+    const isTriple = (i) => {
+      const [names, cur] = list2.slice(i, i + 3);
+      return i + 2 < list2.length && names.length > 0 && names.every((x) => typeof x === "string" && Number.isNaN(Number(x))) && cur.length === names.length && cur.every((x) => num(x) !== null);
+    };
+    const first2 = list2.findIndex((_, i) => isTriple(i));
+    if (first2 < 0) continue;
+    const campuses = [];
+    for (let i = first2, n = 0; isTriple(i); i += 3, n++) {
+      const [names, cur, max] = list2.slice(i, i + 3);
+      campuses.push({
+        campus: CAMPUSES[n] ?? `\u533A\u57DF ${n + 1}`,
+        canteens: names.map((name, k) => {
+          const current = num(cur[k]), capacity = num(max[k]);
+          return { name: String(name).replace(/\s+/g, " ").trim(), current, capacity, ratio: capacity ? Math.round(current / capacity * 100) / 100 : null };
+        })
+      });
+    }
+    return { open: true, campuses };
+  }
+  const note = text(html);
+  if (/仅/.test(note)) return { open: false, note: note.slice(0, 200), campuses: [] };
+  throw new Error("\u6CA1\u6709\u5728\u98DF\u5802\u60C5\u51B5\u9875\u9762\u4E0A\u627E\u5230\u4EBA\u6570\u6570\u636E\uFF0C\u5B66\u6821\u9875\u9762\u53EF\u80FD\u66F4\u65B0\u4E86\u3002");
+}
+async function readCanteen(reader) {
+  const ready = (html2) => /<script[^>]*>[\s\S]*\[[\s\S]*\]/.test(html2) || /仅/.test(text(html2));
+  let html = (await reader.getText(CANTEEN_URL)).text;
+  if (!ready(html) && reader.render) html = await reader.render(CANTEEN_URL, ready);
+  return parseCanteen(html);
 }
 
 // src/services/elearning.ts
@@ -1202,7 +1301,7 @@ var CanvasClient = class {
 // src/services/grades.ts
 import { load as load4 } from "cheerio";
 var JW2 = "https://fdjwgl.fudan.edu.cn/student/for-std";
-var num = (v) => typeof v === "number" ? v : typeof v === "string" && v.trim() && Number.isFinite(Number(v)) ? Number(v) : void 0;
+var num2 = (v) => typeof v === "number" ? v : typeof v === "string" && v.trim() && Number.isFinite(Number(v)) ? Number(v) : void 0;
 function parseGradeSheet(body3, semesterNames) {
   let data;
   try {
@@ -1222,9 +1321,9 @@ function parseGradeSheet(body3, semesterNames) {
       return [{
         course,
         code: typeof r.lessonCode === "string" && r.lessonCode || typeof r.courseCode === "string" && r.courseCode || void 0,
-        credits: num(r.credits) ?? num(r.credit),
+        credits: num2(r.credits) ?? num2(r.credit),
         grade: grade || "\u672A\u51FA",
-        gp: num(r.gp),
+        gp: num2(r.gp),
         type: typeof r.courseModuleTypeName === "string" && r.courseModuleTypeName || typeof r.courseType === "string" && r.courseType || void 0,
         semester: name
       }];
@@ -1249,9 +1348,9 @@ function parseGpaRank(body3, studentNumber) {
   const me = studentNumber ? rows.find((r) => String(r.code ?? "") === studentNumber) : void 0;
   if (!me) return { total: rows.length };
   return {
-    gpa: num(me.gpa),
-    credits: num(me.credit),
-    ranking: num(me.ranking),
+    gpa: num2(me.gpa),
+    credits: num2(me.credit),
+    ranking: num2(me.ranking),
     total: rows.length,
     major: typeof me.major === "string" ? me.major : void 0,
     department: typeof me.department === "string" ? me.department : void 0,
@@ -1464,14 +1563,14 @@ async function readSyllabus(reader, lessonId, maxChars = 3e4) {
     const cap = (t) => t.length > maxChars ? `${t.slice(0, maxChars)}\u2026\uFF08\u5DF2\u622A\u65AD\uFF09` : t;
     return { lessonId, ...notice ? { notice } : {}, available: structured.sections.length > 0 || structured.assessment.items.length > 0, ...structured, sections: structured.sections.map((x) => ({ ...x, text: cap(x.text) })) };
   }
-  let text = htmlToText(page.text);
-  if (text.length < 120 && reader.render) text = htmlToText(await reader.render(url, (h) => htmlToText(h).length >= 200));
+  let text2 = htmlToText(page.text);
+  if (text2.length < 120 && reader.render) text2 = htmlToText(await reader.render(url, (h) => htmlToText(h).length >= 200));
   return {
     lessonId,
     ...notice ? { notice } : {},
-    available: text.length >= 40,
-    ...text.length > maxChars ? { truncated: true } : {},
-    text: text.slice(0, maxChars)
+    available: text2.length >= 40,
+    ...text2.length > maxChars ? { truncated: true } : {},
+    text: text2.slice(0, maxChars)
   };
 }
 function parseJsLiteral(src, start) {
@@ -1644,7 +1743,7 @@ var LibrarySearch = class {
 var OPAC = "https://opac.fudan.edu.cn/";
 var LIB_API = "https://fdulspgw.fudan.edu.cn/alsp/open-api/elib5";
 var str = (v) => typeof v === "string" && v.trim() ? v.trim() : void 0;
-var num2 = (v) => typeof v === "number" && Number.isFinite(v) ? v : typeof v === "string" && v.trim() && Number.isFinite(Number(v)) ? Number(v) : void 0;
+var num3 = (v) => typeof v === "number" && Number.isFinite(v) ? v : typeof v === "string" && v.trim() && Number.isFinite(Number(v)) ? Number(v) : void 0;
 function libDate(v) {
   const s = str(v);
   if (!s) return void 0;
@@ -1685,8 +1784,8 @@ function parseCurrentLoans(json, today) {
       ...str(item.permanentLocationName ?? item.temporaryLocationName) ? { location: str(item.permanentLocationName ?? item.temporaryLocationName) } : {},
       loanDate: libDate(log.loanDate) ?? libDate(item.checkoutDate),
       dueDate,
-      renewed: num2(log.renewalCount) ?? num2(item.renewCount) ?? 0,
-      ...num2(policy.renewalCount) !== void 0 ? { renewMax: num2(policy.renewalCount) } : {},
+      renewed: num3(log.renewalCount) ?? num3(item.renewCount) ?? 0,
+      ...num3(policy.renewalCount) !== void 0 ? { renewMax: num3(policy.renewalCount) } : {},
       overdue: daysLeft !== void 0 && daysLeft < 0,
       ...daysLeft !== void 0 ? { daysLeft } : {}
     };
@@ -1696,7 +1795,7 @@ function parseHistory(json) {
   const d = json?.data ?? {};
   const list2 = d.list ?? [];
   return {
-    total: num2(d.total) ?? list2.length,
+    total: num3(d.total) ?? list2.length,
     loans: list2.map((row) => {
       const inst = row.catalogueInstance ?? {};
       return {
@@ -1712,10 +1811,10 @@ function parseHistory(json) {
 function parseReader(json) {
   const d = json?.data ?? {};
   return {
-    canBorrow: num2(d.canLoanTotal),
-    overdue: num2(d.overdueTotal),
-    fees: num2(d.fees),
-    holds: num2(d.currentRequestCount),
+    canBorrow: num3(d.canLoanTotal),
+    overdue: num3(d.overdueTotal),
+    fees: num3(d.fees),
+    holds: num3(d.currentRequestCount),
     ...libDate(d.expirationDate) ? { cardExpires: libDate(d.expirationDate) } : {}
   };
 }
@@ -1877,16 +1976,16 @@ function validDate(y, m, d) {
   const iso = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
   return (/* @__PURE__ */ new Date(`${iso}T00:00:00Z`)).toISOString().startsWith(iso) ? iso : void 0;
 }
-function findDate(text) {
+function findDate(text2) {
   const full = /* @__PURE__ */ new Set();
-  for (const m of text.matchAll(/(?<!\d)(20\d{2})\s*[-/.年]\s*(\d{1,2})\s*[-/.月]\s*(\d{1,2})\s*日?(?!\d)/g)) {
+  for (const m of text2.matchAll(/(?<!\d)(20\d{2})\s*[-/.年]\s*(\d{1,2})\s*[-/.月]\s*(\d{1,2})\s*日?(?!\d)/g)) {
     const d = validDate(+m[1], +m[2], +m[3]);
     if (d) full.add(d);
   }
   if (full.size === 1) return [...full][0];
   if (full.size > 1) return null;
-  const ym = text.match(/(?<!\d)(20\d{2})\s*[-/.年]\s*(\d{1,2})(?![\d-/.])/);
-  const rest = ym ? text.replace(ym[0], " ") : "";
+  const ym = text2.match(/(?<!\d)(20\d{2})\s*[-/.年]\s*(\d{1,2})(?![\d-/.])/);
+  const rest = ym ? text2.replace(ym[0], " ") : "";
   const day = ym ? rest.match(/(?<!\d)(\d{1,2})(?!\d)/) : null;
   if (ym && day) return validDate(+ym[1], +ym[2], +day[1]) ?? void 0;
   return void 0;
@@ -1950,8 +2049,8 @@ function rowDate($, row, title) {
 }
 function rowTitle($, a) {
   const candidates = a.find('.title, .tit, [class*="tt"], h3, h4, p, span').map((_i, x) => cleanText($(x).text())).get().filter((t) => t.length >= 6 && !DATE_ONLY.test(t));
-  const text = candidates[0] ?? cleanText(a.text());
-  return text.replace(/(?<!\d)20\d{2}\s*[-/.年]\s*\d{1,2}\s*[-/.月]\s*\d{1,2}\s*日?/g, "");
+  const text2 = candidates[0] ?? cleanText(a.text());
+  return text2.replace(/(?<!\d)20\d{2}\s*[-/.年]\s*\d{1,2}\s*[-/.月]\s*\d{1,2}\s*日?/g, "");
 }
 var BODY = [".wp_articlecontent", ".v_news_content", "#vsb_content", ".article-content", ".article_content", ".content-con", ".TRS_Editor", ".entry-content", "article", ".article", ".content", "#content"];
 function parseNoticeDetail(html, pageUrl) {
@@ -2001,11 +2100,11 @@ function parseNoticeDetail(html, pageUrl) {
   body3.find("p, div, li, tr, h1, h2, h3, h4").each((_i, x) => {
     $(x).append("\n");
   });
-  const text = body3.text().replace(/[ \t 　]+/g, " ").replace(/ *\n */g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  const text2 = body3.text().replace(/[ \t 　]+/g, " ").replace(/ *\n */g, "\n").replace(/\n{3,}/g, "\n\n").trim();
   const meta = cleanText($(".arti_metas, .article-info, .info, .time, .date, .news_meta, .arti-metas, .view-info").first().text());
   const labeled = cleanText($("body").text()).match(/(?:发布(?:日期|时间)|日期|时间)\s*[:：]\s*(20\d{2}\s*[-/.年]\s*\d{1,2}\s*[-/.月]\s*\d{1,2})/)?.[1];
   const title = cleanText($(".arti_title, .article-title, .news_title, .view-title, .art-tit h3, h1").first().text()) || cleanText($("title").text()).replace(/\s*[-|_].*$/, "");
-  return { title: title || void 0, date: findDate(meta) || (labeled ? findDate(labeled) : void 0) || void 0, text, attachments };
+  return { title: title || void 0, date: findDate(meta) || (labeled ? findDate(labeled) : void 0) || void 0, text: text2, attachments };
 }
 
 // src/services/notice-sources.ts
@@ -2060,9 +2159,9 @@ function aliases(name) {
   return [name, short].filter((s) => s.length >= 2);
 }
 function ownSchoolSources(school2) {
-  const text = school2?.trim();
-  if (!text) return [];
-  return NOTICE_SOURCES.filter((s) => s.group === "\u9662\u7CFB" && aliases(s.name).some((a) => text.includes(a) || a.includes(text)));
+  const text2 = school2?.trim();
+  if (!text2) return [];
+  return NOTICE_SOURCES.filter((s) => s.group === "\u9662\u7CFB" && aliases(s.name).some((a) => text2.includes(a) || a.includes(text2)));
 }
 function findNoticeSource(query) {
   const q = query.trim();
@@ -2352,8 +2451,8 @@ function weekdayOf(day) {
 function sundayOf(day) {
   return addDays(day, -(/* @__PURE__ */ new Date(`${day}T00:00:00Z`)).getUTCDay());
 }
-function shanghaiTime(day, hhmm) {
-  return new Date(Date.parse(`${day}T${hhmm}:00+08:00`)).toISOString();
+function shanghaiTime(day, hhmm2) {
+  return new Date(Date.parse(`${day}T${hhmm2}:00+08:00`)).toISOString();
 }
 function week0SundayFor(semester) {
   const known = SEMESTERS.find((s) => semester.name && s.name === semester.name.replace(/\s+/g, ""));
@@ -2776,10 +2875,10 @@ function parseConsumePage(body3) {
     const type = rest[1] ?? "";
     const merchant = rest[2] ?? "";
     const rawAmount = (rest[3] ?? "").replace(/[,，¥￥元\s]/g, "");
-    const num3 = /[-+]?\d+(?:\.\d+)?/.exec(rawAmount)?.[0];
-    if (num3 === void 0) return;
-    const value = Math.abs(Number(num3));
-    const signed = /^-/.test(num3) ? -value : /^\+/.test(num3) ? value : INCOME.test(type) ? value : -value;
+    const num4 = /[-+]?\d+(?:\.\d+)?/.exec(rawAmount)?.[0];
+    if (num4 === void 0) return;
+    const value = Math.abs(Number(num4));
+    const signed = /^-/.test(num4) ? -value : /^\+/.test(num4) ? value : INCOME.test(type) ? value : -value;
     records.push({ time: shanghaiIso(y, mo, d, h, mi, sec), type, merchant, amount: Math.round(signed * 100) / 100 });
   });
   return { records, pages: pages ? Number(pages) : void 0 };
@@ -2967,22 +3066,22 @@ function occupant($, td) {
   const tags = td.find("span.tag").map((_, el) => $(el).text().trim()).get().filter(Boolean);
   const copy = td.clone();
   copy.find("span.tag").remove();
-  const text = copy.text().replace(/\s+/g, " ").trim();
-  if (!text && !tags.length) return null;
-  const m = /^([A-Z]{2,}[A-Z0-9.]*\d[\w.]*)?\s*\[(.+?)\]\s*(?:\(([^)]*)\))?\s*(?:\{(\d+)人\})?/.exec(text);
-  const borrow = tags.includes("\u4E34\u501F") || /临借/.test(text);
+  const text2 = copy.text().replace(/\s+/g, " ").trim();
+  if (!text2 && !tags.length) return null;
+  const m = /^([A-Z]{2,}[A-Z0-9.]*\d[\w.]*)?\s*\[(.+?)\]\s*(?:\(([^)]*)\))?\s*(?:\{(\d+)人\})?/.exec(text2);
+  const borrow = tags.includes("\u4E34\u501F") || /临借/.test(text2);
   if (m && (m[1] || m[2]) && !borrow) {
     return {
       kind: "course",
       tags,
-      text,
+      text: text2,
       ...m[1] ? { code: m[1] } : {},
       name: m[2],
       ...m[3] ? { teacher: m[3] } : {},
       ...m[4] ? { people: Number(m[4]) } : {}
     };
   }
-  return { kind: borrow ? "borrow" : "other", tags, text, ...borrow ? { name: text.replace(/^临借\s*/, "") } : {} };
+  return { kind: borrow ? "borrow" : "other", tags, text: text2, ...borrow ? { name: text2.replace(/^临借\s*/, "") } : {} };
 }
 function parseDayPage(html) {
   const $ = load8(html);
@@ -3021,8 +3120,8 @@ function periodSpan(periods, from, to) {
   const b = periods.find((p) => p.no === to);
   return a && b ? `${a.start}-${b.end}` : "";
 }
-function periodAt(periods, hhmm) {
-  return periods.find((p) => hhmm <= p.end)?.no;
+function periodAt(periods, hhmm2) {
+  return periods.find((p) => hhmm2 <= p.end)?.no;
 }
 function blocks(room) {
   const out = [];
@@ -3047,10 +3146,10 @@ function floorOf(building, room) {
   return d ? Number(d) : void 0;
 }
 var range = (periods, from, to) => `\u7B2C${from === to ? from : `${from}\u2013${to}`}\u8282 ${periodSpan(periods, from, to)}`;
-function nowStatus(page, room, hhmm) {
-  const p = periodAt(page.periods, hhmm);
+function nowStatus(page, room, hhmm2) {
+  const p = periodAt(page.periods, hhmm2);
   if (p === void 0) return { status: "closed" };
-  const inClass = hhmm >= page.periods[p - 1].start;
+  const inClass = hhmm2 >= page.periods[p - 1].start;
   const cur = room.periods[p - 1];
   if (cur && inClass) {
     const b = blocks(room).find((x) => x.from <= p && p <= x.to);
@@ -3197,9 +3296,9 @@ async function describeCall(r, opts = {}) {
     return null;
   }
   if (/\.(js|css|png|jpe?g|gif|svg|woff2?|ico|map)$/i.test(u.pathname) || /(^|\.)(mon-mp|hm\.baidu|google-analytics|cnzz)\b/i.test(u.hostname)) return null;
-  const text = await r.body().catch(() => "");
-  let response = `${r.contentType.split(";")[0] || "\u672A\u77E5\u7C7B\u578B"}\uFF08${text.length} \u5B57\u8282\uFF09`;
-  const trimmed = text.trim();
+  const text2 = await r.body().catch(() => "");
+  let response = `${r.contentType.split(";")[0] || "\u672A\u77E5\u7C7B\u578B"}\uFF08${text2.length} \u5B57\u8282\uFF09`;
+  const trimmed = text2.trim();
   if (/json/.test(r.contentType) || /^[[{]/.test(trimmed)) {
     try {
       response = shapeOf(JSON.parse(trimmed));
@@ -4015,10 +4114,10 @@ var OPS = [
         }
         return { course: a.course, lecture: a.lecture, duration, segments: out, ...next !== void 0 ? { nextOffset: next } : {} };
       }
-      const text = transcriptText(segments);
-      const part = text.slice(offset, offset + max);
-      const nextOffset = offset + max < text.length ? offset + max : void 0;
-      return { course: a.course, lecture: a.lecture, duration, totalChars: text.length, offset, text: part, ...nextOffset !== void 0 ? { nextOffset, note: `\u8FD8\u6709 ${text.length - nextOffset} \u5B57\uFF0C\u7528 --offset ${nextOffset} \u7EE7\u7EED\u8BFB\u3002` } : {} };
+      const text2 = transcriptText(segments);
+      const part = text2.slice(offset, offset + max);
+      const nextOffset = offset + max < text2.length ? offset + max : void 0;
+      return { course: a.course, lecture: a.lecture, duration, totalChars: text2.length, offset, text: part, ...nextOffset !== void 0 ? { nextOffset, note: `\u8FD8\u6709 ${text2.length - nextOffset} \u5B57\uFF0C\u7528 --offset ${nextOffset} \u7EE7\u7EED\u8BFB\u3002` } : {} };
     }
   }),
   // ======================= 校园生活 =======================
@@ -4096,6 +4195,35 @@ var OPS = [
         }
         return { from, to, venues: out, note: "\u53EA\u662F\u67E5\u770B\u7A7A\u95F2\u60C5\u51B5\uFF1B\u9884\u7EA6\u8BF7\u5230 booking.fudan.edu.cn\u3002" };
       });
+    }
+  }),
+  op({
+    name: "canteen.crowd",
+    summary: "\u5404\u98DF\u5802\u73B0\u5728\u7684\u5C31\u9910\u4EBA\u6570\u548C\u5BB9\u91CF\uFF08ratio = \u4EBA\u6570 / \u5BB9\u91CF\uFF09\u3002\u4E0D\u5728\u7528\u9910\u65F6\u6BB5\u65F6 open \u4E3A false\uFF0C\u5E76\u9644\u4E0A\u5B66\u6821\u9875\u9762\u7684\u8BF4\u660E\u3002",
+    login: "uis",
+    effect: "read",
+    params: { campus: z.string().optional().describe("\u53EA\u770B\u67D0\u4E2A\u6821\u533A\uFF1A\u90AF\u90F8\u3001\u67AB\u6797\u3001\u6C5F\u6E7E\u3001\u5F20\u6C5F") },
+    examples: ["fdu canteen crowd", "fdu canteen crowd --campus \u90AF\u90F8"],
+    async run(ctx, a) {
+      const r = await readCanteen(ctx.session.reader("jwfw"));
+      const campuses = a.campus ? r.campuses.filter((c) => c.campus.includes(a.campus.replace(/校区$/, ""))) : r.campuses;
+      return { ...r, campuses, at: new Date(ctx.now()).toISOString() };
+    }
+  }),
+  op({
+    name: "bus.schedule",
+    summary: "\u6821\u533A\u95F4\u6821\u8F66\u65F6\u523B\u8868\uFF0C\u6309\u65F6\u95F4\u6392\u5E8F\u3002fromTime / toTime \u662F\u5B66\u6821\u65F6\u523B\u8868\u91CC\u8D77\u70B9\u3001\u7EC8\u70B9\u6821\u533A\u4E00\u680F\u7684\u65F6\u523B\uFF1BbothWays \u8868\u793A\u4E24\u4E2A\u65B9\u5411\u90FD\u53D1\u8F66\u3002",
+    login: "uis",
+    effect: "read",
+    params: {
+      holiday: flag("\u8282\u5047\u65E5\u65F6\u523B\u8868\uFF08\u9ED8\u8BA4\u5DE5\u4F5C\u65E5\uFF09"),
+      from: z.string().optional().describe("\u51FA\u53D1\u6821\u533A\uFF1A\u90AF\u90F8\u3001\u6C5F\u6E7E\u3001\u67AB\u6797\u3001\u5F20\u6C5F"),
+      to: z.string().optional().describe("\u5230\u8FBE\u6821\u533A")
+    },
+    examples: ["fdu bus schedule --from \u90AF\u90F8 --to \u6C5F\u6E7E", "fdu bus schedule --holiday"],
+    async run(ctx, a) {
+      const trips = filterBus(await readBus(ctx.session.reader("jwfw"), Boolean(a.holiday)), { from: a.from, to: a.to });
+      return { holiday: Boolean(a.holiday), trips };
     }
   }),
   op({
@@ -4612,6 +4740,8 @@ var GROUPS = [
   { id: "library", name: "\u56FE\u4E66\u9986", desc: "\u5728\u9986\u4EBA\u6570\u3001\u6587\u732E\u68C0\u7D22\u3001\u5728\u501F\u7684\u4E66\u548C\u501F\u9605\u5386\u53F2" },
   { id: "notices", name: "\u5B66\u6821\u901A\u77E5", desc: "\u6559\u52A1\u5904\u3001\u7814\u7A76\u751F\u9662\u3001\u5404\u9662\u7CFB\u5B98\u7F51\u7684\u901A\u77E5" },
   { id: "venue", name: "\u4F53\u80B2\u573A\u9986", desc: "\u5404\u573A\u9986\u6BCF\u4E2A\u65F6\u6BB5\u8FD8\u6709\u54EA\u4E9B\u573A\u5730\u7A7A\u7740\uFF08\u53EA\u770B\uFF0C\u4E0D\u9884\u7EA6\uFF09" },
+  { id: "canteen", name: "\u98DF\u5802", desc: "\u5404\u98DF\u5802\u73B0\u5728\u7684\u5C31\u9910\u4EBA\u6570" },
+  { id: "bus", name: "\u6821\u8F66", desc: "\u6821\u533A\u95F4\u6821\u8F66\u65F6\u523B\u8868" },
   { id: "dorm", name: "\u5BBF\u820D", desc: "\u5269\u4F59\u7535\u91CF" },
   { id: "hole", name: "\u6811\u6D1E", desc: "\u641C\u7D22\u548C\u9605\u8BFB\u6811\u6D1E\u5E16\u5B50\uFF08\u9700\u8981\u6811\u6D1E\u8D26\u53F7\uFF09" },
   { id: "danke", name: "\u86CB\u58F3\u8BFE\u8BC4", desc: "\u8BFE\u7A0B\u8BC4\u4EF7\uFF08\u9700\u8981\u6811\u6D1E\u8D26\u53F7\uFF09" },
@@ -4781,20 +4911,20 @@ async function main(argv) {
     return 0;
   }
   const [first2] = positionals;
-  const text = (t) => {
+  const text2 = (t) => {
     process.stdout.write(t);
     return 0;
   };
-  if (!first2) return text(helpOverview(VERSION2));
-  if (flags.help && first2 !== "help" && !findOp(resolveOpName(positionals).name ?? "") && !groupOf(first2)) return text(helpOverview(VERSION2));
+  if (!first2) return text2(helpOverview(VERSION2));
+  if (flags.help && first2 !== "help" && !findOp(resolveOpName(positionals).name ?? "") && !groupOf(first2)) return text2(helpOverview(VERSION2));
   if (first2 === "help") {
     const rest2 = positionals.slice(1);
-    if (!rest2.length) return text(helpOverview(VERSION2));
+    if (!rest2.length) return text2(helpOverview(VERSION2));
     const target = rest2.length > 1 || rest2[0].includes(".") || ALIASES[rest2[0]] ? resolveOpName(rest2).name : void 0;
     const op3 = target ? findOp(target) : void 0;
-    if (op3) return text(helpOp(op3));
+    if (op3) return text2(helpOp(op3));
     const g = helpGroup(rest2[0]);
-    if (g && rest2.length === 1) return text(g);
+    if (g && rest2.length === 1) return text2(g);
     process.stdout.write(`\u6CA1\u6709\u8FD9\u4E2A\u547D\u4EE4\uFF1A${rest2.join(" ")}\u3002\u8FD0\u884C fdu help \u67E5\u770B\u5168\u90E8\u547D\u4EE4\u3002
 `);
     return 2;
@@ -4821,7 +4951,7 @@ async function main(argv) {
   }
   const { name, rest } = resolveOpName(positionals);
   const op2 = name ? findOp(name) : void 0;
-  if (!op2 && positionals.length === 1 && groupOf(first2)) return text(helpGroup(first2) ?? helpOverview(VERSION2));
+  if (!op2 && positionals.length === 1 && groupOf(first2)) return text2(helpGroup(first2) ?? helpOverview(VERSION2));
   if (!op2) {
     print({ ok: false, error: { code: "NOT_FOUND", message: `\u6CA1\u6709\u8FD9\u4E2A\u547D\u4EE4\uFF1A${positionals.join(" ")}`, hint: "\u8FD0\u884C `fdu help` \u67E5\u770B\u5168\u90E8\u547D\u4EE4\uFF08\u7ED9 AI \u770B\u7684 JSON \u5217\u8868\uFF1A`fdu services`\uFF09\u3002" } });
     return 2;
@@ -4830,7 +4960,7 @@ async function main(argv) {
     print({ ok: false, op: op2.name, error: { code: "BAD_ARGS", message: `\u591A\u4F59\u7684\u53C2\u6570\uFF1A${rest.join(" ")}`, hint: `\u53C2\u6570\u8981\u5199\u6210 --\u540D\u5B57 \u503C\uFF0C\u7528 \`fdu describe ${op2.name}\` \u67E5\u770B\u3002` } });
     return 2;
   }
-  if (flags.help) return text(helpOp(op2));
+  if (flags.help) return text2(helpOp(op2));
   const store = new Store(profile);
   const session = new Session(store, { browserPath: browser, headed: flags.headed === true });
   const input = Object.fromEntries(Object.entries(flags).filter(([k]) => !GLOBAL.has(k)).map(([k, v]) => [camel(k), v]));

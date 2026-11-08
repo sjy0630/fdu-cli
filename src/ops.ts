@@ -9,6 +9,8 @@ import type { Store } from './core/store';
 import { readProgramCompletion, readSelectedCourses } from './services/academic';
 import { readCardBalance, readLibrary } from './services/campus-life';
 import { readElectricity } from './services/dorm';
+import { filterBus, readBus } from './services/bus';
+import { readCanteen } from './services/canteen';
 import { CanvasClient, isAssignmentDone, type CanvasCourse } from './services/elearning';
 import { readGpaRank, readGrades, readStudentId } from './services/grades';
 import { readExams, readLessons, readSemesters, readSyllabus, readTimetable } from './services/jw';
@@ -795,6 +797,31 @@ export const OPS: Op[] = [
         }
         return { from, to, venues: out, note: '只是查看空闲情况；预约请到 booking.fudan.edu.cn。' };
       });
+    },
+  }),
+  op({
+    name: 'canteen.crowd', summary: '各食堂现在的就餐人数和容量（ratio = 人数 / 容量）。不在用餐时段时 open 为 false，并附上学校页面的说明。',
+    login: 'uis', effect: 'read',
+    params: { campus: z.string().optional().describe('只看某个校区：邯郸、枫林、江湾、张江') },
+    examples: ['fdu canteen crowd', 'fdu canteen crowd --campus 邯郸'],
+    async run(ctx, a) {
+      const r = await readCanteen(ctx.session.reader('jwfw'));
+      const campuses = a.campus ? r.campuses.filter((c) => c.campus.includes(a.campus!.replace(/校区$/, ''))) : r.campuses;
+      return { ...r, campuses, at: new Date(ctx.now()).toISOString() };
+    },
+  }),
+  op({
+    name: 'bus.schedule', summary: '校区间校车时刻表，按时间排序。fromTime / toTime 是学校时刻表里起点、终点校区一栏的时刻；bothWays 表示两个方向都发车。',
+    login: 'uis', effect: 'read',
+    params: {
+      holiday: flag('节假日时刻表（默认工作日）'),
+      from: z.string().optional().describe('出发校区：邯郸、江湾、枫林、张江'),
+      to: z.string().optional().describe('到达校区'),
+    },
+    examples: ['fdu bus schedule --from 邯郸 --to 江湾', 'fdu bus schedule --holiday'],
+    async run(ctx, a) {
+      const trips = filterBus(await readBus(ctx.session.reader('jwfw'), Boolean(a.holiday)), { from: a.from, to: a.to });
+      return { holiday: Boolean(a.holiday), trips };
     },
   }),
   op({
