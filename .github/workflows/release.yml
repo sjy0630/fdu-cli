@@ -1,9 +1,11 @@
-# 推送 v* 标签（如 v0.1.0）时：检查、打包，把 fdu-cli.tgz 附到 GitHub Release，
-# 之后可以 npm install -g https://github.com/sjy0630/fdu-cli/releases/latest/download/fdu-cli.tgz
+# 发布新版本：推送 v* 标签（如 v0.1.0），或在 Actions 页面手动运行（用 package.json 里的版本号建标签）。
+# 检查、打包，把 fdu-cli.tgz 附到 GitHub Release，之后可以
+# npm install -g https://github.com/sjy0630/fdu-cli/releases/latest/download/fdu-cli.tgz
 name: Release
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 permissions:
   contents: write
 jobs:
@@ -15,11 +17,20 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: 版本号
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "标签 $GITHUB_REF_NAME 和 package.json 的版本 $version 不一致"; exit 1
+          fi
+          echo "TAG=v$version" >> "$GITHUB_ENV"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
       - run: npm ci
       - run: npm run check
+      - run: git diff --exit-code -- dist
       - run: npm pack && mv fdu-cli-*.tgz fdu-cli.tgz
       # 说明取自 CHANGELOG.md 里这个版本的那一节
-      - run: awk -v v="## ${GITHUB_REF_NAME#v} " 'index($0, v) == 1 { p = 1; next } /^## / { if (p) exit } p' CHANGELOG.md > notes.md && test -s notes.md
+      - run: awk -v v="## $VERSION " 'index($0, v) == 1 { p = 1; next } /^## / { if (p) exit } p' CHANGELOG.md > notes.md && test -s notes.md
       - env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" fdu-cli.tgz --title "fdu-cli $GITHUB_REF_NAME" --notes-file notes.md
+        run: gh release create "$TAG" fdu-cli.tgz --target "$GITHUB_SHA" --title "fdu-cli $TAG" --notes-file notes.md
