@@ -1,0 +1,23 @@
+# 推送 v* 标签（如 v0.1.0）时：检查、打包，把 fdu-cli.tgz 附到 GitHub Release，
+# 之后可以 npm install -g https://github.com/sjy0630/fdu-cli/releases/latest/download/fdu-cli.tgz
+name: Release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm pack && mv fdu-cli-*.tgz fdu-cli.tgz
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" fdu-cli.tgz --title "$GITHUB_REF_NAME" --generate-notes

@@ -17,3 +17,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+      # dist/cli.js 是提交进仓库的构建结果（从 GitHub 直接安装时不用再构建），必须和源码一致
+      - name: dist 是最新的
+        if: matrix.os == 'ubuntu-latest'
+        run: git diff --exit-code -- dist || (echo "dist/cli.js 和源码不一致：请运行 npm run build 并提交" && exit 1)

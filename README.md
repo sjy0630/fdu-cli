@@ -40,21 +40,25 @@ fdu mcp                        # 以 MCP 服务运行
 
 ## 安装
 
-需要 Node.js 20 或更新版本，以及 Chrome 或 Edge 浏览器（登录和部分页面要用）。
+需要 Node.js 20 或更新版本、Git，以及 Chrome 或 Edge 浏览器（登录和部分页面要用）。
 
 ```bash
-npm install -g github:sjy0630/fdu-cli
+git clone https://github.com/sjy0630/fdu-cli.git ~/fdu-cli
+cd ~/fdu-cli
+npm install
+npm install -g .
 fdu --version
 ```
 
-从源码：
+以后更新：在 `~/fdu-cli` 里 `git pull`，再 `npm install`。
+
+发布了版本之后也可以一行安装（从 GitHub Releases 下载打包好的安装包）：
 
 ```bash
-git clone https://github.com/sjy0630/fdu-cli.git
-cd fdu-cli
-npm install
-npm link
+npm install -g https://github.com/sjy0630/fdu-cli/releases/latest/download/fdu-cli.tgz
 ```
+
+> 不要用 `npm install -g github:sjy0630/fdu-cli`：npm 从 Git 地址全局安装时会把命令指向一个装完就删掉的临时目录，装不上。
 
 没有装 Chrome / Edge 时，可以把 `FDU_BROWSER` 设成任意 Chromium 内核浏览器的可执行文件路径，或者运行 `npx playwright install chromium`。
 

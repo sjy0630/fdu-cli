@@ -27,7 +27,7 @@ tests/              vitest；页面和接口样例都是虚构内容
 
 1. 在 `services/` 里写读取和解析，读取通过 `CampusReader`（或注入的 fetch），不直接发请求，这样测试能用假数据。
 2. 在 `ops.ts` 的 `OPS` 里加一项：`name` 形如 `服务.操作`，写清 `summary`、`params`（zod，带 `.describe()`）、`login`、`effect`；成绩、邮件这类数据标 `sensitive: true`；需要在终端输入密码的标 `mcp: false`。
-3. 加测试，运行 `npm run docs` 更新命令参考，`npm run check` 全部通过。
+3. 加测试，运行 `npm run docs` 更新命令参考，`npm run check` 全部通过（它会重新构建 `dist/cli.js`，一起提交：从 GitHub 直接安装时用的是仓库里的构建结果）。
 
 ## 约定
 
