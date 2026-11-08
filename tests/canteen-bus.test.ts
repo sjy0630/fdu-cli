@@ -65,22 +65,20 @@ const busBody = JSON.stringify({ e: 0, d: { data: [
 ] } });
 
 describe('校车', () => {
-  it('解析时刻表：时间补零、反向车次掉头、没有时刻的跳过、按时间排序', () => {
+  it('解析时刻表：每个方向单独一条，时间补零，没有时刻的跳过，按发车时间排序', () => {
     expect(parseBus(busBody)).toEqual([
-      { from: '邯郸', to: '江湾', fromTime: '07:30', toTime: null, bothWays: false },
-      { from: '邯郸', to: '枫林', fromTime: '08:15', toTime: null, bothWays: false },
-      { from: '邯郸', to: '江湾', fromTime: '12:00', toTime: '12:20', bothWays: true },
-      { from: '江湾', to: '邯郸', fromTime: '17:10', toTime: null, bothWays: false },
+      { from: '邯郸', to: '江湾', departAt: '07:30' },
+      { from: '邯郸', to: '枫林', departAt: '08:15' },
+      { from: '邯郸', to: '江湾', departAt: '12:00' },
+      { from: '江湾', to: '邯郸', departAt: '12:20' },
+      { from: '江湾', to: '邯郸', departAt: '17:10' },
     ]);
     expect(() => parseBus(JSON.stringify({ e: 1, m: '系统维护' }))).toThrow('系统维护');
   });
 
-  it('按方向筛选，双向车次在反方向也算', () => {
+  it('按出发、到达校区筛选', () => {
     const trips = parseBus(busBody);
-    expect(filterBus(trips, { from: '江湾', to: '邯郸校区' })).toEqual([
-      { from: '江湾', to: '邯郸', fromTime: '12:20', toTime: '12:00', bothWays: true },
-      { from: '江湾', to: '邯郸', fromTime: '17:10', toTime: null, bothWays: false },
-    ]);
+    expect(filterBus(trips, { from: '江湾', to: '邯郸校区' }).map((t) => t.departAt)).toEqual(['12:20', '17:10']);
     expect(filterBus(trips, { to: '枫林' })).toHaveLength(1);
   });
 
@@ -102,6 +100,6 @@ describe('校车', () => {
       },
       render: async (_url, ready) => { session = ready('', 'https://zlapp.fudan.edu.cn/site/home'); return ''; },
     }, false);
-    expect(trips).toHaveLength(4);
+    expect(trips).toHaveLength(5);
   });
 });

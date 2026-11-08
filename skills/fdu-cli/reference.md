@@ -559,7 +559,7 @@ fdu canteen crowd --campus 邯郸
 
 ### `fdu bus schedule`
 
-校区间校车时刻表，按时间排序。fromTime / toTime 是学校时刻表里起点、终点校区一栏的时刻；bothWays 表示两个方向都发车。
+校区间校车时刻表：每班车的出发校区、到达校区和发车时间，按发车时间排序。
 
 登录：复旦账号 · 只读 · MCP：`bus_schedule`
 

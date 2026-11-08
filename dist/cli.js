@@ -1025,23 +1025,22 @@ function parseBus(body3) {
   for (const route of data.d.data) {
     if (!Array.isArray(route?.lists)) continue;
     for (const raw of route.lists) {
-      const start = campus(raw.start), end = campus(raw.end);
+      const a = campus(raw.start), b = campus(raw.end);
+      if (!a || !b) continue;
       const st = hhmm(raw.stime), et = hhmm(raw.etime);
-      if (!start || !end || !st && !et) continue;
-      const arrow = Number(raw.arrow);
-      trips.push(arrow === 2 ? { from: end, to: start, fromTime: et, toTime: st, bothWays: false } : { from: start, to: end, fromTime: st, toTime: et, bothWays: arrow === 1 });
+      if (st) trips.push({ from: a, to: b, departAt: st });
+      if (et) trips.push({ from: b, to: a, departAt: et });
     }
   }
-  const key = (t) => t.fromTime ?? t.toTime ?? "";
-  return trips.sort((a, b) => key(a).localeCompare(key(b)));
+  const seen = /* @__PURE__ */ new Set();
+  return trips.filter((t) => {
+    const k = `${t.from}|${t.to}|${t.departAt}`;
+    return !seen.has(k) && !!seen.add(k);
+  }).sort((x, y) => x.departAt.localeCompare(y.departAt) || x.from.localeCompare(y.from));
 }
 function filterBus(trips, opts) {
   const hit = (name, q) => !q || name.includes(campus(q));
-  return trips.flatMap((t) => {
-    if (hit(t.from, opts.from) && hit(t.to, opts.to)) return [t];
-    if (t.bothWays && hit(t.to, opts.from) && hit(t.from, opts.to)) return [{ from: t.to, to: t.from, fromTime: t.toTime, toTime: t.fromTime, bothWays: true }];
-    return [];
-  });
+  return trips.filter((t) => hit(t.from, opts.from) && hit(t.to, opts.to));
 }
 async function readBus(reader, holiday) {
   const text2 = await readZlapp(reader, BUS_URL, {
@@ -4240,7 +4239,7 @@ var OPS = [
   }),
   op({
     name: "bus.schedule",
-    summary: "\u6821\u533A\u95F4\u6821\u8F66\u65F6\u523B\u8868\uFF0C\u6309\u65F6\u95F4\u6392\u5E8F\u3002fromTime / toTime \u662F\u5B66\u6821\u65F6\u523B\u8868\u91CC\u8D77\u70B9\u3001\u7EC8\u70B9\u6821\u533A\u4E00\u680F\u7684\u65F6\u523B\uFF1BbothWays \u8868\u793A\u4E24\u4E2A\u65B9\u5411\u90FD\u53D1\u8F66\u3002",
+    summary: "\u6821\u533A\u95F4\u6821\u8F66\u65F6\u523B\u8868\uFF1A\u6BCF\u73ED\u8F66\u7684\u51FA\u53D1\u6821\u533A\u3001\u5230\u8FBE\u6821\u533A\u548C\u53D1\u8F66\u65F6\u95F4\uFF0C\u6309\u53D1\u8F66\u65F6\u95F4\u6392\u5E8F\u3002",
     login: "uis",
     effect: "read",
     params: {
