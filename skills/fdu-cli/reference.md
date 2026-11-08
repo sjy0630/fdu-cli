@@ -454,15 +454,22 @@ fdu rooms free --building H3,H4 --date 2026-11-10 --from 6 --to 8
 
 ### `fdu rooms day`
 
-一栋楼一天的教室安排：每间教室哪几节有什么课或活动、哪几节空着。
+教室的完整信息（给 AI 判断用）：每栋楼的汇总（按楼层的教室数、座位，查今天时还有现在空着 / 在用几间），每间教室的楼层、座位、全天每段安排（节次、时间、课程代码、课名、老师、人数、临借活动等）、空闲时段；查今天时附上现在的状态（空到几点，或在上什么、到几点）。不指定楼时查全部教学楼（数据较多）。
 
 登录：复旦账号 · 只读 · MCP：`rooms_day`
 
 | 参数 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `--building` | string | 是 | 教学楼代码：H2、H3、H4、H5、H6、HGX、HQ、JA、JB、F1、F2、Z2 |
+| `--building` | string |  | 教学楼代码，多个用逗号分开：H2、H3、H4、H5、H6、HGX、HQ、JA、JB、F1、F2、Z2（H2 = 二教，HGX = 光华楼）；不填查全部 |
 | `--date` | string |  | 日期 YYYY-MM-DD，默认今天 |
 | `--room` | string |  | 只看某间教室，如 H2101 |
+| `--brief` | boolean |  | 简要：不列每节的课程，只给汇总、座位、现在的状态和空闲时段（查很多楼时用） |
+
+```bash
+fdu rooms day --building H2
+fdu rooms day --building H3,HGX --date 2026-11-10
+fdu rooms day --brief
+```
 
 ## 图书馆
 

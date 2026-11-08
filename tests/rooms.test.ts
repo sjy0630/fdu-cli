@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { blocks, dayPageUrl, freeRooms, parseDayPage, periodAt, periodSpan, roomsDay } from '../src/services/rooms';
+import { blocks, dayPageUrl, floorOf, freeRooms, nowStatus, parseDayPage, periodAt, periodSpan, roomsDay, roomsReport } from '../src/services/rooms';
 
 /** 空教室：页面结构按学校多媒体教室系统的「在线课表」，课程、老师、活动都是虚构的 */
 
@@ -64,5 +64,39 @@ describe('在线课表解析', () => {
   it('被带到登录页时要求登录；格式变了时说明', () => {
     expect(() => parseDayPage('<html><title>统一身份认证</title>authCenter</html>')).toThrow(expect.objectContaining({ code: 'NEED_LOGIN' }));
     expect(() => parseDayPage('<html><body>别的页面</body></html>')).toThrow(expect.objectContaining({ code: 'FORMAT_CHANGED' }));
+  });
+});
+
+describe('给 AI 的完整报告', () => {
+  const p = parseDayPage(page);
+
+  it('楼层；现在的状态：在用（在做什么、到几点）/ 空着（空到几点）/ 下课了', () => {
+    expect(floorOf('H2', 'H2101')).toBe(1);
+    expect(floorOf('HGX', 'HGX508')).toBe(5);
+    expect(nowStatus(p, p.rooms[0], '10:00')).toEqual({ status: 'busy', what: 'MATH10026.09 微积分A（演示）', until: '11:35' });
+    expect(nowStatus(p, p.rooms[0], '08:30')).toEqual({ status: 'free', until: '09:55' });
+    expect(nowStatus(p, p.rooms[2], '09:00')).toEqual({ status: 'free', until: '今天结束' });
+    expect(nowStatus(p, p.rooms[0], '12:00')).toEqual({ status: 'closed' });
+    // 课间：按下一节算
+    expect(nowStatus(p, p.rooms[0], '09:45')).toEqual({ status: 'free', until: '09:55' });
+  });
+
+  it('每间教室的全部安排和空闲时段，按楼层汇总', () => {
+    const r = roomsReport('H2', p, { nowHm: '10:00' });
+    expect(r).toMatchObject({ building: 'H2', date: '2026-11-06', week: 9 });
+    expect(r.summary).toEqual({ rooms: 4, seats: 356, freeNow: 3, busyNow: 1, floors: [{ floor: 1, rooms: 4, seats: 356, freeNow: 3, busyNow: 1 }] });
+    expect(r.rooms[0]).toEqual({
+      room: 'H2101', floor: 1, seats: 234, now: { status: 'busy', what: 'MATH10026.09 微积分A（演示）', until: '11:35' },
+      schedule: [{ periods: '3-4', time: '09:55-11:35', kind: 'course', code: 'MATH10026.09', name: '微积分A（演示）', teacher: '王老师', people: 146, tags: ['本', '理学'] }],
+      free: ['第1–2节 08:00-09:40'],
+    });
+    expect(r.rooms[3].schedule).toEqual([
+      { periods: '2-2', time: '08:55-09:40', kind: 'borrow', name: '某学院团校课程（演示）', tags: ['临借'] },
+      { periods: '4-4', time: '10:50-11:35', kind: 'other', note: '不开放自修' },
+    ]);
+    expect(r.rooms[3].free).toEqual(['第1节 08:00-08:45', '第3节 09:55-10:40']);
+    // 不是今天：没有「现在」
+    expect(roomsReport('H2', p).rooms[0]).not.toHaveProperty('now');
+    expect(roomsReport('H2', p, { room: 'h2103' }).rooms.map((x) => x.room)).toEqual(['H2103']);
   });
 });

@@ -130,3 +130,71 @@ export function freeRooms(page: DayPage, from: number, to: number, opts: { minCa
     })
     .sort((a, b) => (b.capacity ?? 0) - (a.capacity ?? 0));
 }
+
+// ---------------- 给 AI 读的完整报告 ----------------
+
+/** 楼层：去掉楼号前缀后的第一位数字（H2101 → 1 楼） */
+export function floorOf(building: string, room: string): number | undefined {
+  const rest = room.toUpperCase().startsWith(building.toUpperCase()) ? room.slice(building.length) : room.replace(/^[A-Z]+/i, '');
+  const d = /\d/.exec(rest)?.[0];
+  return d ? Number(d) : undefined;
+}
+
+const range = (periods: Period[], from: number, to: number) => `第${from === to ? from : `${from}–${to}`}节 ${periodSpan(periods, from, to)}`;
+
+/** 这间教室现在的状态：在用（在做什么、到几点）或空着（空到几点） */
+export function nowStatus(page: DayPage, room: RoomDay, hhmm: string): { status: 'busy'; what: string; until: string } | { status: 'free'; until: string } | { status: 'closed' } {
+  const p = periodAt(page.periods, hhmm);
+  if (p === undefined) return { status: 'closed' };
+  const inClass = hhmm >= page.periods[p - 1].start;
+  const cur = room.periods[p - 1];
+  if (cur && inClass) {
+    const b = blocks(room).find((x) => x.from <= p && p <= x.to)!;
+    return { status: 'busy', what: [cur.code, cur.name ?? cur.text].filter(Boolean).join(' '), until: page.periods[b.to - 1].end };
+  }
+  const next = room.periods.findIndex((o, i) => i >= p - 1 && !!o);
+  return { status: 'free', until: next >= 0 ? page.periods[next].start : '今天结束' };
+}
+
+/** 一栋楼一天的完整报告：汇总（按楼层）+ 每间教室的全部安排和空闲时段；nowHm 给出时附上现在的状态 */
+export function roomsReport(building: string, page: DayPage, opts: { nowHm?: string; room?: string } = {}) {
+  const rooms = page.rooms
+    .filter((r) => !opts.room || r.room.toUpperCase() === opts.room.toUpperCase())
+    .map((r) => {
+      const schedule = blocks(r).map(({ from, to, occupant: o }) => ({
+        periods: `${from}-${to}`, time: periodSpan(page.periods, from, to), kind: o.kind,
+        ...(o.code ? { code: o.code } : {}), ...(o.name ? { name: o.name } : {}), ...(o.teacher ? { teacher: o.teacher } : {}),
+        ...(o.people !== undefined ? { people: o.people } : {}), ...(o.tags.length ? { tags: o.tags } : {}),
+        ...(o.kind === 'other' ? { note: o.text } : {}),
+      }));
+      const free: string[] = [];
+      let start = 0;
+      r.periods.forEach((o, i) => {
+        if (!o && !start) start = i + 1;
+        if (start && (o || i === r.periods.length - 1)) { free.push(range(page.periods, start, o ? i : i + 1)); start = 0; }
+      });
+      return {
+        room: r.room, floor: floorOf(building, r.room), seats: r.capacity,
+        ...(opts.nowHm ? { now: nowStatus(page, r, opts.nowHm) } : {}),
+        schedule, free,
+      };
+    });
+  const floors = new Map<number, { floor: number; rooms: number; seats: number; freeNow: number; busyNow: number }>();
+  for (const r of rooms) {
+    const f = floors.get(r.floor ?? 0) ?? { floor: r.floor ?? 0, rooms: 0, seats: 0, freeNow: 0, busyNow: 0 };
+    f.rooms++; f.seats += r.seats ?? 0;
+    if (r.now?.status === 'free') f.freeNow++;
+    if (r.now?.status === 'busy') f.busyNow++;
+    floors.set(f.floor, f);
+  }
+  const fl = [...floors.values()].sort((a, b) => a.floor - b.floor);
+  return {
+    building, date: page.date, week: page.week,
+    summary: {
+      rooms: rooms.length, seats: fl.reduce((s, f) => s + f.seats, 0),
+      ...(opts.nowHm ? { freeNow: fl.reduce((s, f) => s + f.freeNow, 0), busyNow: fl.reduce((s, f) => s + f.busyNow, 0) } : {}),
+      floors: opts.nowHm ? fl : fl.map(({ floor, rooms: n, seats }) => ({ floor, rooms: n, seats })),
+    },
+    rooms,
+  };
+}

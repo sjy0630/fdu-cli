@@ -2669,7 +2669,7 @@ var ymd = (t) => {
   const d = new Date(t + 8 * 36e5);
   return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
 };
-async function readCardRecords(reader, range, opts = {}) {
+async function readCardRecords(reader, range2, opts = {}) {
   let index = await reader.getText(CONSUME_INDEX);
   let csrf = parseCsrf(index.text);
   if (!csrf && reader.render) {
@@ -2696,8 +2696,8 @@ async function readCardRecords(reader, range, opts = {}) {
       tabNo: "1",
       "pager.offset": "10",
       tradename: "",
-      starttime: range.from,
-      endtime: range.to,
+      starttime: range2.from,
+      endtime: range2.to,
       timetype: "1",
       _tradedirect: "on",
       _csrf: csrf
@@ -2920,6 +2920,78 @@ function freeRooms(page, from, to, opts = {}) {
     const next = nextIdx >= 0 ? page.periods[nextIdx] : void 0;
     return { room: r.room, capacity: r.capacity, freeUntil: next ? `\u7B2C ${next.no} \u8282\uFF08${next.start}\uFF09\u524D` : "\u4ECA\u5929\u4E4B\u540E\u90FD\u7A7A\u7740" };
   }).sort((a, b) => (b.capacity ?? 0) - (a.capacity ?? 0));
+}
+function floorOf(building, room) {
+  const rest = room.toUpperCase().startsWith(building.toUpperCase()) ? room.slice(building.length) : room.replace(/^[A-Z]+/i, "");
+  const d = /\d/.exec(rest)?.[0];
+  return d ? Number(d) : void 0;
+}
+var range = (periods, from, to) => `\u7B2C${from === to ? from : `${from}\u2013${to}`}\u8282 ${periodSpan(periods, from, to)}`;
+function nowStatus(page, room, hhmm) {
+  const p = periodAt(page.periods, hhmm);
+  if (p === void 0) return { status: "closed" };
+  const inClass = hhmm >= page.periods[p - 1].start;
+  const cur = room.periods[p - 1];
+  if (cur && inClass) {
+    const b = blocks(room).find((x) => x.from <= p && p <= x.to);
+    return { status: "busy", what: [cur.code, cur.name ?? cur.text].filter(Boolean).join(" "), until: page.periods[b.to - 1].end };
+  }
+  const next = room.periods.findIndex((o, i) => i >= p - 1 && !!o);
+  return { status: "free", until: next >= 0 ? page.periods[next].start : "\u4ECA\u5929\u7ED3\u675F" };
+}
+function roomsReport(building, page, opts = {}) {
+  const rooms = page.rooms.filter((r) => !opts.room || r.room.toUpperCase() === opts.room.toUpperCase()).map((r) => {
+    const schedule = blocks(r).map(({ from, to, occupant: o }) => ({
+      periods: `${from}-${to}`,
+      time: periodSpan(page.periods, from, to),
+      kind: o.kind,
+      ...o.code ? { code: o.code } : {},
+      ...o.name ? { name: o.name } : {},
+      ...o.teacher ? { teacher: o.teacher } : {},
+      ...o.people !== void 0 ? { people: o.people } : {},
+      ...o.tags.length ? { tags: o.tags } : {},
+      ...o.kind === "other" ? { note: o.text } : {}
+    }));
+    const free = [];
+    let start = 0;
+    r.periods.forEach((o, i) => {
+      if (!o && !start) start = i + 1;
+      if (start && (o || i === r.periods.length - 1)) {
+        free.push(range(page.periods, start, o ? i : i + 1));
+        start = 0;
+      }
+    });
+    return {
+      room: r.room,
+      floor: floorOf(building, r.room),
+      seats: r.capacity,
+      ...opts.nowHm ? { now: nowStatus(page, r, opts.nowHm) } : {},
+      schedule,
+      free
+    };
+  });
+  const floors = /* @__PURE__ */ new Map();
+  for (const r of rooms) {
+    const f = floors.get(r.floor ?? 0) ?? { floor: r.floor ?? 0, rooms: 0, seats: 0, freeNow: 0, busyNow: 0 };
+    f.rooms++;
+    f.seats += r.seats ?? 0;
+    if (r.now?.status === "free") f.freeNow++;
+    if (r.now?.status === "busy") f.busyNow++;
+    floors.set(f.floor, f);
+  }
+  const fl = [...floors.values()].sort((a, b) => a.floor - b.floor);
+  return {
+    building,
+    date: page.date,
+    week: page.week,
+    summary: {
+      rooms: rooms.length,
+      seats: fl.reduce((s, f) => s + f.seats, 0),
+      ...opts.nowHm ? { freeNow: fl.reduce((s, f) => s + f.freeNow, 0), busyNow: fl.reduce((s, f) => s + f.busyNow, 0) } : {},
+      floors: opts.nowHm ? fl : fl.map(({ floor, rooms: n, seats }) => ({ floor, rooms: n, seats }))
+    },
+    rooms
+  };
 }
 
 // src/services/capture.ts
@@ -3247,11 +3319,11 @@ async function roomsDayPage(ctx, building, day) {
   if (/webvpn\.fudan\.edu\.cn\/login/.test(r.url)) throw new FduError("NEED_LOGIN", "WebVPN \u767B\u5F55\u5DF2\u8FC7\u671F\u3002", "\u8FD0\u884C `fdu login --webvpn`\u3002");
   return parseDayPage(r.text);
 }
-function buildingList(value) {
+function buildingList(value, max = 6) {
   const list2 = value.split(/[,，\s]+/).map((b) => b.trim().toUpperCase()).filter(Boolean);
   const bad = list2.filter((b) => !BUILDINGS.includes(b));
   if (bad.length) throw new FduError("BAD_ARGS", `\u4E0D\u8BA4\u8BC6\u7684\u6559\u5B66\u697C\uFF1A${bad.join("\u3001")}\u3002`, `\u53EF\u9009\uFF1A${BUILDINGS.join("\u3001")}\uFF08H2 = \u4E8C\u6559\uFF0CHGX = \u5149\u534E\u697C\uFF09\u3002`);
-  if (list2.length > 6) throw new FduError("BAD_ARGS", "\u4E00\u6B21\u6700\u591A\u67E5 6 \u680B\u697C\u3002");
+  if (list2.length > max) throw new FduError("BAD_ARGS", `\u4E00\u6B21\u6700\u591A\u67E5 ${max} \u680B\u697C\u3002`);
   return list2;
 }
 function overviewDeps(ctx) {
@@ -3808,12 +3880,12 @@ var OPS = [
     },
     examples: ["fdu card transactions", "fdu card transactions --days 30 --limit 0", "fdu card transactions --from 2026-10-01 --to 2026-10-31"],
     async run(ctx, a) {
-      const range = cardRange(ctx.now(), { days: a.days, from: a.from, to: a.to });
-      const { records, truncated } = await readCardRecords(ctx.session.reader("jwfw"), range);
+      const range2 = cardRange(ctx.now(), { days: a.days, from: a.from, to: a.to });
+      const { records, truncated } = await readCardRecords(ctx.session.reader("jwfw"), range2);
       const picked = a.merchant ? records.filter((r) => r.merchant.includes(a.merchant)) : records;
       const limit = a.limit ?? 100;
       return {
-        ...range,
+        ...range2,
         summary: summarize(picked),
         records: picked.slice(0, limit).map((r) => ({ ...r, timeShanghai: shanghaiDate(r.time) })),
         ...picked.length > limit ? { note: `\u53EA\u5217\u51FA\u6700\u65B0 ${limit} \u6761\u660E\u7EC6\uFF0C\u7EDF\u8BA1\u6309\u5168\u90E8 ${picked.length} \u6761\u8BA1\u7B97\uFF1B\u8981\u5168\u90E8\u660E\u7EC6\u7528 --limit ${Math.min(2e3, picked.length)}\u3002` } : {},
@@ -3936,33 +4008,45 @@ var OPS = [
   }),
   op({
     name: "rooms.day",
-    summary: "\u4E00\u680B\u697C\u4E00\u5929\u7684\u6559\u5BA4\u5B89\u6392\uFF1A\u6BCF\u95F4\u6559\u5BA4\u54EA\u51E0\u8282\u6709\u4EC0\u4E48\u8BFE\u6216\u6D3B\u52A8\u3001\u54EA\u51E0\u8282\u7A7A\u7740\u3002",
+    summary: "\u6559\u5BA4\u7684\u5B8C\u6574\u4FE1\u606F\uFF08\u7ED9 AI \u5224\u65AD\u7528\uFF09\uFF1A\u6BCF\u680B\u697C\u7684\u6C47\u603B\uFF08\u6309\u697C\u5C42\u7684\u6559\u5BA4\u6570\u3001\u5EA7\u4F4D\uFF0C\u67E5\u4ECA\u5929\u65F6\u8FD8\u6709\u73B0\u5728\u7A7A\u7740 / \u5728\u7528\u51E0\u95F4\uFF09\uFF0C\u6BCF\u95F4\u6559\u5BA4\u7684\u697C\u5C42\u3001\u5EA7\u4F4D\u3001\u5168\u5929\u6BCF\u6BB5\u5B89\u6392\uFF08\u8282\u6B21\u3001\u65F6\u95F4\u3001\u8BFE\u7A0B\u4EE3\u7801\u3001\u8BFE\u540D\u3001\u8001\u5E08\u3001\u4EBA\u6570\u3001\u4E34\u501F\u6D3B\u52A8\u7B49\uFF09\u3001\u7A7A\u95F2\u65F6\u6BB5\uFF1B\u67E5\u4ECA\u5929\u65F6\u9644\u4E0A\u73B0\u5728\u7684\u72B6\u6001\uFF08\u7A7A\u5230\u51E0\u70B9\uFF0C\u6216\u5728\u4E0A\u4EC0\u4E48\u3001\u5230\u51E0\u70B9\uFF09\u3002\u4E0D\u6307\u5B9A\u697C\u65F6\u67E5\u5168\u90E8\u6559\u5B66\u697C\uFF08\u6570\u636E\u8F83\u591A\uFF09\u3002",
     login: "uis",
     effect: "read",
     params: {
-      building: z.string().min(1).describe(`\u6559\u5B66\u697C\u4EE3\u7801\uFF1A${BUILDINGS.join("\u3001")}`),
+      building: z.string().optional().describe(`\u6559\u5B66\u697C\u4EE3\u7801\uFF0C\u591A\u4E2A\u7528\u9017\u53F7\u5206\u5F00\uFF1A${BUILDINGS.join("\u3001")}\uFF08H2 = \u4E8C\u6559\uFF0CHGX = \u5149\u534E\u697C\uFF09\uFF1B\u4E0D\u586B\u67E5\u5168\u90E8`),
       date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("\u65E5\u671F YYYY-MM-DD\uFF0C\u9ED8\u8BA4\u4ECA\u5929"),
-      room: z.string().optional().describe("\u53EA\u770B\u67D0\u95F4\u6559\u5BA4\uFF0C\u5982 H2101")
+      room: z.string().optional().describe("\u53EA\u770B\u67D0\u95F4\u6559\u5BA4\uFF0C\u5982 H2101"),
+      brief: flag("\u7B80\u8981\uFF1A\u4E0D\u5217\u6BCF\u8282\u7684\u8BFE\u7A0B\uFF0C\u53EA\u7ED9\u6C47\u603B\u3001\u5EA7\u4F4D\u3001\u73B0\u5728\u7684\u72B6\u6001\u548C\u7A7A\u95F2\u65F6\u6BB5\uFF08\u67E5\u5F88\u591A\u697C\u65F6\u7528\uFF09")
     },
+    examples: ["fdu rooms day --building H2", "fdu rooms day --building H3,HGX --date 2026-11-10", "fdu rooms day --brief"],
     async run(ctx, a) {
-      const [b] = buildingList(a.building);
-      const page = await roomsDayPage(ctx, b, a.date ?? shanghaiDay(ctx.now()));
-      const rooms = page.rooms.filter((r) => !a.room || r.room.toUpperCase() === a.room.toUpperCase()).map((r) => {
-        const used = blocks(r).map((x) => ({ periods: `${x.from}-${x.to}`, time: periodSpan(page.periods, x.from, x.to), ...x.occupant }));
-        const freeRanges = [];
-        let start = 0;
-        r.periods.forEach((o, i) => {
-          if (!o && !start) start = i + 1;
-          if ((o || i === r.periods.length - 1) && start) {
-            const end = o ? i : i + 1;
-            freeRanges.push(`\u7B2C ${start === end ? start : `${start}\u2013${end}`} \u8282\uFF08${periodSpan(page.periods, start, end)}\uFF09`);
-            start = 0;
-          }
-        });
-        return { room: r.room, capacity: r.capacity, schedule: used, free: freeRanges };
-      });
-      if (a.room && !rooms.length) throw new FduError("NOT_FOUND", `${b} \u91CC\u6CA1\u6709\u6559\u5BA4 ${a.room}\u3002`);
-      return { building: b, date: page.date, week: page.week, periods: page.periods, rooms };
+      const today = shanghaiDay(ctx.now());
+      const day = a.date ?? today;
+      const list2 = a.building ? buildingList(a.building, 12) : BUILDINGS;
+      const nowHm = day === today ? new Date(ctx.now() + 8 * 36e5).toISOString().slice(11, 16) : void 0;
+      const results = [];
+      const errors = {};
+      let periods;
+      for (const b of list2) {
+        try {
+          const page = await roomsDayPage(ctx, b, day);
+          periods ??= page.periods;
+          const report = roomsReport(b, page, { nowHm, room: a.room });
+          results.push(a.brief ? { ...report, rooms: report.rooms.map(({ schedule: _s, ...rest }) => rest) } : report);
+        } catch (e) {
+          if (e instanceof FduError && e.code.startsWith("NEED_")) throw e;
+          errors[b] = e.message;
+        }
+      }
+      const buildings = a.room ? results.filter((r) => r.rooms.length) : results;
+      if (a.room && !buildings.length) throw new FduError("NOT_FOUND", `\u6CA1\u6709\u627E\u5230\u6559\u5BA4 ${a.room}\u3002`, "\u68C0\u67E5\u6559\u5BA4\u53F7\uFF0C\u6216\u8005\u7528 --building \u6307\u5B9A\u697C\u3002");
+      return {
+        date: day,
+        ...nowHm ? { now: nowHm } : {},
+        periods: periods?.map((p) => `\u7B2C${p.no}\u8282 ${p.start}-${p.end}`),
+        buildings,
+        ...Object.keys(errors).length ? { errors } : {},
+        note: "\u300C\u4E0D\u5F00\u653E\u81EA\u4FEE\u300D\u7B49\u6807\u6CE8\u7B97\u5360\u7528\uFF1B\u4E34\u65F6\u501F\u7528\u4EE5\u5B66\u6821\u7CFB\u7EDF\u4E3A\u51C6\u3002"
+      };
     }
   }),
   op({

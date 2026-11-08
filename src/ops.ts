@@ -28,7 +28,7 @@ import { NeedLoginError } from './core/fudan-auth';
 import { cardRange, readCardRecords, summarize } from './services/ecard';
 import { BOOKING_CAS, bookingReady, listVenues, matchVenues, SPORTS_PAGE, venueCalendar, type GetJson } from './services/venues';
 import { addDays } from './services/calendar';
-import { BUILDINGS, blocks, dayPageUrl, freeRooms, parseDayPage, periodAt, periodSpan, ROOMS_ORIGIN, type DayPage } from './services/rooms';
+import { BUILDINGS, dayPageUrl, freeRooms, parseDayPage, periodAt, periodSpan, roomsReport, ROOMS_ORIGIN, type DayPage } from './services/rooms';
 import { toWebvpnUrl } from './services/webvpn';
 import { dedupe, describeCall, sanitizeHtml, type CapturedCall } from './services/capture';
 import { proxyFromEnv } from './core/session';
@@ -293,11 +293,11 @@ async function roomsDayPage(ctx: Ctx, building: string, day: string): Promise<Da
   return parseDayPage(r.text);
 }
 
-function buildingList(value: string): string[] {
+function buildingList(value: string, max = 6): string[] {
   const list = value.split(/[,，\s]+/).map((b) => b.trim().toUpperCase()).filter(Boolean);
   const bad = list.filter((b) => !BUILDINGS.includes(b));
   if (bad.length) throw new FduError('BAD_ARGS', `不认识的教学楼：${bad.join('、')}。`, `可选：${BUILDINGS.join('、')}（H2 = 二教，HGX = 光华楼）。`);
-  if (list.length > 6) throw new FduError('BAD_ARGS', '一次最多查 6 栋楼。');
+  if (list.length > max) throw new FduError('BAD_ARGS', `一次最多查 ${max} 栋楼。`);
   return list;
 }
 
@@ -809,27 +809,44 @@ export const OPS: Op[] = [
     },
   }),
   op({
-    name: 'rooms.day', summary: '一栋楼一天的教室安排：每间教室哪几节有什么课或活动、哪几节空着。', login: 'uis', effect: 'read',
+    name: 'rooms.day', summary: '教室的完整信息（给 AI 判断用）：每栋楼的汇总（按楼层的教室数、座位，查今天时还有现在空着 / 在用几间），每间教室的楼层、座位、全天每段安排（节次、时间、课程代码、课名、老师、人数、临借活动等）、空闲时段；查今天时附上现在的状态（空到几点，或在上什么、到几点）。不指定楼时查全部教学楼（数据较多）。',
+    login: 'uis', effect: 'read',
     params: {
-      building: z.string().min(1).describe(`教学楼代码：${BUILDINGS.join('、')}`),
+      building: z.string().optional().describe(`教学楼代码，多个用逗号分开：${BUILDINGS.join('、')}（H2 = 二教，HGX = 光华楼）；不填查全部`),
       date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('日期 YYYY-MM-DD，默认今天'),
       room: z.string().optional().describe('只看某间教室，如 H2101'),
+      brief: flag('简要：不列每节的课程，只给汇总、座位、现在的状态和空闲时段（查很多楼时用）'),
     },
+    examples: ['fdu rooms day --building H2', 'fdu rooms day --building H3,HGX --date 2026-11-10', 'fdu rooms day --brief'],
     async run(ctx, a) {
-      const [b] = buildingList(a.building);
-      const page = await roomsDayPage(ctx, b, a.date ?? shanghaiDay(ctx.now()));
-      const rooms = page.rooms.filter((r) => !a.room || r.room.toUpperCase() === a.room.toUpperCase()).map((r) => {
-        const used = blocks(r).map((x) => ({ periods: `${x.from}-${x.to}`, time: periodSpan(page.periods, x.from, x.to), ...x.occupant }));
-        const freeRanges: string[] = [];
-        let start = 0;
-        r.periods.forEach((o, i) => {
-          if (!o && !start) start = i + 1;
-          if ((o || i === r.periods.length - 1) && start) { const end = o ? i : i + 1; freeRanges.push(`第 ${start === end ? start : `${start}–${end}`} 节（${periodSpan(page.periods, start, end)}）`); start = 0; }
-        });
-        return { room: r.room, capacity: r.capacity, schedule: used, free: freeRanges };
-      });
-      if (a.room && !rooms.length) throw new FduError('NOT_FOUND', `${b} 里没有教室 ${a.room}。`);
-      return { building: b, date: page.date, week: page.week, periods: page.periods, rooms };
+      const today = shanghaiDay(ctx.now());
+      const day = a.date ?? today;
+      const list = a.building ? buildingList(a.building, 12) : BUILDINGS;
+      const nowHm = day === today ? new Date(ctx.now() + 8 * 3_600_000).toISOString().slice(11, 16) : undefined;
+      const results = [];
+      const errors: Record<string, string> = {};
+      let periods: { no: number; start: string; end: string }[] | undefined;
+      for (const b of list) {
+        try {
+          const page = await roomsDayPage(ctx, b, day);
+          periods ??= page.periods;
+          const report = roomsReport(b, page, { nowHm, room: a.room });
+          results.push(a.brief ? { ...report, rooms: report.rooms.map(({ schedule: _s, ...rest }) => rest) } : report);
+        } catch (e) {
+          // 登录问题直接报，其他问题（某栋楼读不到）记下来继续
+          if (e instanceof FduError && e.code.startsWith('NEED_')) throw e;
+          errors[b] = (e as Error).message;
+        }
+      }
+      const buildings = a.room ? results.filter((r) => r.rooms.length) : results;
+      if (a.room && !buildings.length) throw new FduError('NOT_FOUND', `没有找到教室 ${a.room}。`, '检查教室号，或者用 --building 指定楼。');
+      return {
+        date: day, ...(nowHm ? { now: nowHm } : {}),
+        periods: periods?.map((p) => `第${p.no}节 ${p.start}-${p.end}`),
+        buildings,
+        ...(Object.keys(errors).length ? { errors } : {}),
+        note: '「不开放自修」等标注算占用；临时借用以学校系统为准。',
+      };
     },
   }),
 

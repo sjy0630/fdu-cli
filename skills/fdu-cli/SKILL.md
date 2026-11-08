@@ -56,7 +56,7 @@ description: 查询复旦大学校园服务：eLearning 课程 / 作业 / DDL / 
 | 选课：某门课谁开、几点、还有名额吗 | `fdu jw lessons --keyword 数据结构`（下学期加 `--semester`） |
 | 找论文 | `fdu library search --query "..." --year-from 2022`，只依据摘要总结，给出 DOI 或链接 |
 | 哪个图书馆人少 | `fdu library seats` |
-| 现在哪有空教室 / 找个地方自习 | `fdu rooms free --building H2`（H2 二教、HGX 光华楼……；某天某几节加 `--date --from --to`）；需要登录时请用户运行 `fdu rooms login` |
+| 找教室自习 / 哪间教室合适 / 某间教室今天的安排 | `fdu rooms day --building H2`（H2 二教、HGX 光华楼……）：每间教室的楼层、座位、现在的状态、全天安排和空闲时段，按用户的需求（离哪近、要多大、要待到几点、避开下课人流）自己挑；全校先用 `fdu rooms day --brief` 看大概。只要空教室名单也可以用 `fdu rooms free`。需要登录时请用户运行 `fdu rooms login` |
 | 去哪打球 / 场馆还有空吗 | `fdu venue free --venue "北区 羽毛球" --days 3`（只能看，预约要用户自己去 booking.fudan.edu.cn） |
 | 校园卡 / 电费 | `fdu card balance`、`fdu dorm electricity` |
 | 这个月吃饭花了多少 | `fdu card transactions --from 2026-11-01 --limit 0`（只要统计，不要明细） |

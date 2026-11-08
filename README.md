@@ -29,7 +29,7 @@ fdu mcp                        # 以 MCP 服务运行
 | 教务系统 | `fdu jw semesters / timetable / exams / grades / gpa / program / selected / lessons` | 课表（含研究生）、考试、成绩和绩点、排名、培养方案完成情况、选课结果、全校开课查询 |
 | iCourse 课程回放 | `fdu icourse search / terms / lectures / transcript` | 找课程、列出每一讲和有没有回放、读课堂文字稿（自动转写，带时间）；学校审核期内的回放如实说明未开放 |
 | 校园卡 | `fdu card balance`、`fdu card transactions` | 余额；消费记录和统计（总支出、日均、按商户和餐次） |
-| 空教室 | `fdu rooms free`、`fdu rooms day` | 某栋楼现在（或某天某几节）哪些教室空着、空到几点；每间教室当天的课和借用（第一次先 `fdu rooms login`；校外经 WebVPN） |
+| 教室 | `fdu rooms day`、`fdu rooms free` | 各教学楼每间教室的楼层、座位、现在空着还是在用、全天的课和临时借用、空闲时段，按楼层汇总；或只列空教室（第一次先 `fdu rooms login`；校外经 WebVPN） |
 | 体育场馆 | `fdu venue list`、`fdu venue free` | 各场馆每个时段还有哪些场地空着（只看，不预约） |
 | 宿舍 | `fdu dorm electricity` | 剩余电量 |
 | 图书馆 | `fdu library seats / search / loans / history` | 各馆在馆人数、文献检索（不用登录）；在借的书和应还日期、借阅历史（第一次先 `fdu library login`） |
