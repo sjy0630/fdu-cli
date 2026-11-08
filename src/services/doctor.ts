@@ -23,7 +23,7 @@ export interface DoctorDeps {
 const HOSTS: { name: string; url: string; required: boolean; note?: string }[] = [
   { name: '统一身份认证', url: 'https://id.fudan.edu.cn/', required: true },
   { name: 'eLearning', url: 'https://elearning.fudan.edu.cn/', required: true },
-  { name: '教务系统', url: 'https://fdjwgl.fudan.edu.cn/', required: true },
+  { name: '教务系统', url: 'https://fdjwgl.fudan.edu.cn/student/home', required: true },
   { name: 'WebVPN', url: 'https://webvpn.fudan.edu.cn/', required: false, note: '校外访问树洞要用' },
   { name: '图书馆', url: 'https://mlibrary.fudan.edu.cn/', required: false },
   { name: '树洞', url: 'https://forum.fduhole.com/api/divisions', required: false, note: '校外连不上是正常的，会自动走 WebVPN' },

@@ -287,12 +287,13 @@ export const OPS: Op[] = [
       url: z.string().url().describe('从哪个页面开始，如 https://fdjwgl.fudan.edu.cn/student/home'),
       out: z.string().optional().describe('结果保存到哪里，默认当前目录的 fdu-capture-时间.json'),
       minutes: int('最多录多久（分钟），默认 10', 1, 60),
+      keepQuery: flag('保留查询参数的值（如翻页参数的格式；令牌和长数字会遮掉，发出前请自己看一遍）'),
     },
     examples: ['fdu dev capture --url https://fdjwgl.fudan.edu.cn/student/home'],
     async run(ctx, a) {
       const calls: CapturedCall[] = [];
       ctx.log('已打开浏览器：请点到要做的功能页面，查询一两次，然后关掉浏览器窗口。');
-      await ctx.session.record(a.url, async (r) => { const c = await describeCall(r); if (c) calls.push(c); }, (a.minutes ?? 10) * 60_000);
+      await ctx.session.record(a.url, async (r) => { const c = await describeCall(r, { keepQuery: a.keepQuery }); if (c) calls.push(c); }, (a.minutes ?? 10) * 60_000);
       const result = dedupe(calls).filter((c) => !/google|baidu|cnzz|analytics/i.test(c.endpoint));
       const stamp = new Date(ctx.now()).toISOString().replace(/[:.]/g, '-').slice(0, 19);
       const target = resolve(ctx.cwd, a.out ?? `fdu-capture-${stamp}.json`);

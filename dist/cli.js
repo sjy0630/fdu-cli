@@ -51,11 +51,14 @@ var FduError = class extends Error {
   code;
   hint;
 };
+function redact(s) {
+  return s.replace(/([\w-]*(?:token|csrf|session|cookie|ticket|auth|key|sid)[\w-]*)=([^;\s"',&]+)/gi, "$1=***").replace(/[A-Za-z0-9%+/_-]{32,}={0,2}/g, "***");
+}
 function toFduError(e) {
   if (e instanceof FduError) return e;
   if (e instanceof NeedLoginError) return new FduError("NEED_LOGIN", "\u590D\u65E6\u8D26\u53F7\u6CA1\u6709\u767B\u5F55\u6216\u767B\u5F55\u5DF2\u8FC7\u671F\u3002", "\u8FD0\u884C `fdu login`\uFF0C\u5728\u5F39\u51FA\u7684\u6D4F\u89C8\u5668\u91CC\u767B\u5F55\u590D\u65E6\u7EDF\u4E00\u8EAB\u4EFD\u8BA4\u8BC1\u3002");
   const err = e;
-  const message = String(err?.message ?? e).replace(/\u001b\[[0-9;]*m/g, "").split(/\nCall log:|\n/)[0].replace(/^apiRequestContext\.\w+:\s*/, "");
+  const message = redact(String(err?.message ?? e).replace(/\u001b\[[0-9;]*m/g, "").split(/\nCall log:|\n/)[0].replace(/^apiRequestContext\.\w+:\s*/, ""));
   if (err?.name === "TreeholeLoginError") return new FduError("NEED_HOLE_LOGIN", "\u9700\u8981\u767B\u5F55\u6811\u6D1E\u8D26\u53F7\u3002", "\u8FD0\u884C `fdu hole login --email \u5B66\u53F7@m.fudan.edu.cn`\uFF08\u5BC6\u7801\u53EA\u7528\u6765\u6362\u53D6\u4EE4\u724C\uFF0C\u4E0D\u4FDD\u5B58\uFF09\u3002");
   if (err?.name === "TimetableFormatError") return new FduError("FORMAT_CHANGED", message);
   if (err?.status === 403) return new FduError("PERMISSION", message);
@@ -216,20 +219,25 @@ var Session = class {
         contentType: res.headers()["content-type"] ?? "",
         resourceType: req.resourceType(),
         body: () => res.text(),
-        postData: req.postData() ?? void 0
+        postData: req.postData() ?? void 0,
+        requestHeaders: req.headers()
       }).catch(() => void 0));
     });
     try {
       const page = await context.newPage();
       void page.goto(url, { timeout: 6e4 }).catch(() => void 0);
+      let timer;
       await Promise.race([
         new Promise((resolve2) => {
           context.on("close", () => resolve2());
           browser.on("disconnected", () => resolve2());
           page.on("close", () => resolve2());
         }),
-        sleep(timeoutMs)
+        new Promise((resolve2) => {
+          timer = setTimeout(resolve2, timeoutMs);
+        })
       ]);
+      clearTimeout(timer);
       await Promise.all(pending);
       if (browser.isConnected()) {
         const state = await context.storageState().catch(() => void 0);
@@ -396,6 +404,14 @@ var ELEARNING_SELF = `${PLATFORM_URLS.elearning.base}/api/v1/users/self`;
 var JW_HOME = "https://fdjwgl.fudan.edu.cn/student/home";
 var WEBVPN_HOME = "https://webvpn.fudan.edu.cn/";
 var WEBVPN_CAS = "https://webvpn.fudan.edu.cn/login?cas_login=true";
+function safeHeaders(h) {
+  const out = {};
+  for (const [k, v] of Object.entries(h)) {
+    if (k.toLowerCase() === "set-cookie") continue;
+    out[k] = v.replace(/[\r\n]+/g, ", ");
+  }
+  return out;
+}
 function sessionAuth(session) {
   return {
     async fetch(platform, url, init) {
@@ -405,7 +421,7 @@ function sessionAuth(session) {
       });
       const r = await session.fetch(platform, url, { method: init?.method, headers, body: typeof init?.body === "string" ? init.body : void 0 });
       const nullBody = [101, 204, 205, 304].includes(r.status);
-      const res = new Response(nullBody ? null : new Uint8Array(r.body), { status: r.status, headers: r.headers });
+      const res = new Response(nullBody ? null : new Uint8Array(r.body), { status: r.status, headers: safeHeaders(r.headers) });
       Object.defineProperty(res, "url", { value: r.url });
       if (res.status === 401 && !await isPermissionDenied(res)) throw new NeedLoginError(platform);
       return res;
@@ -461,8 +477,15 @@ async function login(session, opts = {}) {
   let user = existing;
   if (!user) {
     opts.onWaiting?.("\u5DF2\u6253\u5F00\u6D4F\u89C8\u5668\uFF0C\u8BF7\u5728\u5B66\u6821\u7684\u767B\u5F55\u9875\u9762\u91CC\u5B8C\u6210\u767B\u5F55\uFF08\u6700\u957F\u7B49\u5F85 5 \u5206\u949F\uFF09\u2026\u2026");
-    await session.withPage(PLATFORM_URLS.elearning.entry, async (page) => {
+    const startedAt = Date.now();
+    let fellBack = false;
+    await session.withPage(`${PLATFORM_URLS.elearning.base}/login/cas`, async (page) => {
       if (new URL(page.url()).origin !== PLATFORM_URLS.elearning.base) return false;
+      if (!fellBack && Date.now() - startedAt > 8e3 && new URL(page.url()).pathname.startsWith("/login/cas")) {
+        fellBack = true;
+        await page.goto(`${PLATFORM_URLS.elearning.base}/login`).catch(() => void 0);
+        return false;
+      }
       try {
         const r = await page.request.get(ELEARNING_SELF, { headers: { Accept: "application/json" }, failOnStatusCode: false });
         const data = r.ok() ? await r.json() : null;
@@ -476,8 +499,14 @@ async function login(session, opts = {}) {
   }
   let jwfw = await platformStatus(session, "jwfw");
   if (jwfw !== "ok") {
-    await session.withPage(JW_HOME, (page) => new URL(page.url()).hostname === "fdjwgl.fudan.edu.cn", { headless: true, timeoutMs: 25e3, platform: "jwfw" }).catch(() => void 0);
-    jwfw = await platformStatus(session, "jwfw");
+    await session.withPage(JW_HOME, (page) => {
+      const u = new URL(page.url());
+      return u.hostname === "fdjwgl.fudan.edu.cn" && u.pathname.startsWith("/student/home");
+    }, { headless: true, timeoutMs: 25e3, platform: "jwfw" }).catch(() => void 0);
+    for (let i = 0; i < 3 && jwfw !== "ok"; i++) {
+      jwfw = await platformStatus(session, "jwfw");
+      if (jwfw !== "ok") await new Promise((r) => setTimeout(r, 1500));
+    }
   }
   let webvpn;
   if (opts.webvpn) {
@@ -2152,7 +2181,7 @@ function buildIcs(events, opts) {
 var HOSTS = [
   { name: "\u7EDF\u4E00\u8EAB\u4EFD\u8BA4\u8BC1", url: "https://id.fudan.edu.cn/", required: true },
   { name: "eLearning", url: "https://elearning.fudan.edu.cn/", required: true },
-  { name: "\u6559\u52A1\u7CFB\u7EDF", url: "https://fdjwgl.fudan.edu.cn/", required: true },
+  { name: "\u6559\u52A1\u7CFB\u7EDF", url: "https://fdjwgl.fudan.edu.cn/student/home", required: true },
   { name: "WebVPN", url: "https://webvpn.fudan.edu.cn/", required: false, note: "\u6821\u5916\u8BBF\u95EE\u6811\u6D1E\u8981\u7528" },
   { name: "\u56FE\u4E66\u9986", url: "https://mlibrary.fudan.edu.cn/", required: false },
   { name: "\u6811\u6D1E", url: "https://forum.fduhole.com/api/divisions", required: false, note: "\u6821\u5916\u8FDE\u4E0D\u4E0A\u662F\u6B63\u5E38\u7684\uFF0C\u4F1A\u81EA\u52A8\u8D70 WebVPN" }
@@ -2606,27 +2635,60 @@ function htmlOutline(html) {
   const forms = $("form").map((_, f) => ({ action: $(f).attr("action")?.split("?")[0], fields: $(f).find("input[name],select[name],textarea[name]").map((_i, x) => $(x).attr("name")).get().filter((n) => !/csrf|token|password/i.test(n)) })).get();
   return { title: $("title").first().text().trim() || void 0, tables: tables.filter((t) => t.length), forms };
 }
+var FIELD = /^[\w.\[\]-]{1,60}$/;
 function fieldsOf(postData) {
   if (!postData) return [];
   try {
     const j = JSON.parse(postData);
-    if (j && typeof j === "object" && !Array.isArray(j)) return Object.keys(j);
+    if (j && typeof j === "object" && !Array.isArray(j)) return Object.keys(j).filter((k) => FIELD.test(k));
+    return ["<JSON \u6570\u7EC4\uFF0C\u5DF2\u7701\u7565>"];
   } catch {
   }
   try {
-    return [...new URLSearchParams(postData).keys()];
+    const keys = [...new URLSearchParams(postData).keys()];
+    return keys.length && keys.every((k) => FIELD.test(k)) ? keys : ["<\u975E\u8868\u5355\u6570\u636E\uFF0C\u5DF2\u7701\u7565>"];
   } catch {
-    return [];
+    return ["<\u975E\u8868\u5355\u6570\u636E\uFF0C\u5DF2\u7701\u7565>"];
   }
 }
-async function describeCall(r) {
+function maskPath(path) {
+  return path.split("/").map((seg) => /^\d{4,}$/.test(seg) || /^[0-9a-f-]{20,}$/i.test(seg) || /^[A-Za-z0-9_-]{24,}$/.test(seg) ? "{id}" : seg).join("/");
+}
+var STANDARD = /^(accept|accept-.*|user-agent|referer|origin|cookie|connection|host|content-length|dnt|cache-control|pragma|sec-.*|upgrade-insecure-requests|priority|if-.*|range)$/i;
+function headerNames(h) {
+  if (!h) return void 0;
+  const out = {};
+  for (const [k, v] of Object.entries(h)) {
+    if (STANDARD.test(k)) continue;
+    if (/^content-type$/i.test(k)) {
+      out[k] = v.split(";")[0];
+      continue;
+    }
+    if (/^authorization$/i.test(k)) {
+      out[k] = `${v.split(/\s+/)[0]} ***`;
+      continue;
+    }
+    out[k] = "***";
+  }
+  return Object.keys(out).length ? out : void 0;
+}
+function queryValues(u) {
+  const out = {};
+  for (const [k, v] of u.searchParams) {
+    const secretName = /token|secret|passw|ticket/i.test(k) || /^(?:.*[_-])?(?:code|sign|signature|auth|key|apikey|session|sessionid|sid|pass)$/i.test(k);
+    const masked = secretName ? "***" : redact(v).replace(/\d{8,}/g, "<\u6570\u5B57>").slice(0, 60);
+    out[k] = masked;
+  }
+  return out;
+}
+async function describeCall(r, opts = {}) {
   let u;
   try {
     u = new URL(r.url);
   } catch {
     return null;
   }
-  if (/\.(js|css|png|jpe?g|gif|svg|woff2?|ico|map)$/i.test(u.pathname)) return null;
+  if (/\.(js|css|png|jpe?g|gif|svg|woff2?|ico|map)$/i.test(u.pathname) || /(^|\.)(mon-mp|hm\.baidu|google-analytics|cnzz)\b/i.test(u.hostname)) return null;
   const text = await r.body().catch(() => "");
   let response = `${r.contentType.split(";")[0] || "\u672A\u77E5\u7C7B\u578B"}\uFF08${text.length} \u5B57\u8282\uFF09`;
   const trimmed = text.trim();
@@ -2639,10 +2701,12 @@ async function describeCall(r) {
     const inner = /<!\[CDATA\[([\s\S]*?)\]\]>/.exec(trimmed)?.[1] ?? trimmed;
     response = htmlOutline(inner);
   }
+  const headers = headerNames(r.requestHeaders);
   return {
     method: r.method,
-    endpoint: `${u.origin}${u.pathname}`,
-    query: [...new Set(u.searchParams.keys())],
+    endpoint: `${u.origin}${maskPath(u.pathname)}`,
+    query: opts.keepQuery ? queryValues(u) : [...new Set(u.searchParams.keys())],
+    ...headers ? { headers } : {},
     bodyFields: fieldsOf(r.postData),
     status: r.status,
     contentType: r.contentType.split(";")[0],
@@ -2655,7 +2719,8 @@ function dedupe(calls) {
     const k = `${c.method} ${c.endpoint}`;
     const prev = map.get(k);
     if (!prev) map.set(k, c);
-    else prev.query = [.../* @__PURE__ */ new Set([...prev.query, ...c.query])];
+    else if (Array.isArray(prev.query) && Array.isArray(c.query)) prev.query = [.../* @__PURE__ */ new Set([...prev.query, ...c.query])];
+    else if (!Array.isArray(prev.query) && !Array.isArray(c.query)) prev.query = { ...prev.query, ...c.query };
   }
   return [...map.values()];
 }
@@ -2893,14 +2958,15 @@ var OPS = [
     params: {
       url: z.string().url().describe("\u4ECE\u54EA\u4E2A\u9875\u9762\u5F00\u59CB\uFF0C\u5982 https://fdjwgl.fudan.edu.cn/student/home"),
       out: z.string().optional().describe("\u7ED3\u679C\u4FDD\u5B58\u5230\u54EA\u91CC\uFF0C\u9ED8\u8BA4\u5F53\u524D\u76EE\u5F55\u7684 fdu-capture-\u65F6\u95F4.json"),
-      minutes: int2("\u6700\u591A\u5F55\u591A\u4E45\uFF08\u5206\u949F\uFF09\uFF0C\u9ED8\u8BA4 10", 1, 60)
+      minutes: int2("\u6700\u591A\u5F55\u591A\u4E45\uFF08\u5206\u949F\uFF09\uFF0C\u9ED8\u8BA4 10", 1, 60),
+      keepQuery: flag("\u4FDD\u7559\u67E5\u8BE2\u53C2\u6570\u7684\u503C\uFF08\u5982\u7FFB\u9875\u53C2\u6570\u7684\u683C\u5F0F\uFF1B\u4EE4\u724C\u548C\u957F\u6570\u5B57\u4F1A\u906E\u6389\uFF0C\u53D1\u51FA\u524D\u8BF7\u81EA\u5DF1\u770B\u4E00\u904D\uFF09")
     },
     examples: ["fdu dev capture --url https://fdjwgl.fudan.edu.cn/student/home"],
     async run(ctx, a) {
       const calls = [];
       ctx.log("\u5DF2\u6253\u5F00\u6D4F\u89C8\u5668\uFF1A\u8BF7\u70B9\u5230\u8981\u505A\u7684\u529F\u80FD\u9875\u9762\uFF0C\u67E5\u8BE2\u4E00\u4E24\u6B21\uFF0C\u7136\u540E\u5173\u6389\u6D4F\u89C8\u5668\u7A97\u53E3\u3002");
       await ctx.session.record(a.url, async (r) => {
-        const c = await describeCall(r);
+        const c = await describeCall(r, { keepQuery: a.keepQuery });
         if (c) calls.push(c);
       }, (a.minutes ?? 10) * 6e4);
       const result = dedupe(calls).filter((c) => !/google|baidu|cnzz|analytics/i.test(c.endpoint));

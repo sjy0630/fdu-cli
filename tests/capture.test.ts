@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { dedupe, describeCall, htmlOutline, shapeOf } from '../src/services/capture';
+import { dedupe, describeCall, htmlOutline, maskPath, shapeOf } from '../src/services/capture';
+import { safeHeaders } from '../src/core/auth';
+import { redact } from '../src/core/errors';
 
 /** fdu dev capture：只留接口结构，不留任何具体内容（下面的姓名、学号、金额都是虚构的） */
 
@@ -45,5 +47,47 @@ describe('去掉内容，只留结构', () => {
     const d = dedupe([c!, { ...c!, query: ['page'] }]);
     expect(d).toHaveLength(1);
     expect(d[0].query).toEqual(['page']);
+  });
+});
+
+describe('第一次实测后补的', () => {
+  it('路径里的长数字和编号换成 {id}；不是表单的请求体不记内容', async () => {
+    expect(maskPath('/student/for-std/lesson-search/semester/527/search/486752')).toBe('/student/for-std/lesson-search/semester/527/search/{id}');
+    expect(maskPath('/item/3f2a9c1e-77aa-4b1c-9d2e-0123456789ab')).toBe('/item/{id}');
+    const c = await describeCall({
+      method: 'POST', url: 'https://fdjwgl.fudan.edu.cn/student/individual-setting/save-setting', status: 200, contentType: 'application/json',
+      postData: '["last-use-menu:null","[{\\"permCode\\":\\"for-std-lesson-search:menu\\",\\"time\\":\\"2026-11-08T05:49:31.943Z\\"}]"]',
+      body: async () => '{"success":true}',
+    });
+    expect(c?.bodyFields).toEqual(['<JSON 数组，已省略>']);
+    const log = await describeCall({ method: 'POST', url: 'https://x.fudan.edu.cn/log', status: 200, contentType: 'text/plain', postData: 'c{"type":"common"}\np{"start":1794116941820}', body: async () => '' });
+    expect(log?.bodyFields).toEqual(['<非表单数据，已省略>']);
+    expect(await describeCall({ method: 'POST', url: 'https://mon-mp.fudan.edu.cn/action?token=abc', status: 200, contentType: 'text/html', body: async () => '' })).toBeNull();
+  });
+
+  it('请求头只留名字；Authorization 只留认证方式', async () => {
+    const c = await describeCall({
+      method: 'GET', url: 'https://fdulspgw.fudan.edu.cn/alsp/open-api/elib5/getReaderCurrentLoan?pageSize=10&pageNo=1', status: 200, contentType: 'application/json',
+      requestHeaders: { authorization: 'Bearer tok-secret-123', 'x-access-token': 'tok-secret', accept: 'application/json', cookie: 'a=b', 'content-type': 'application/json;charset=UTF-8' },
+      body: async () => '{"code":0}',
+    });
+    expect(c?.headers).toEqual({ authorization: 'Bearer ***', 'x-access-token': '***', 'content-type': 'application/json' });
+    expect(JSON.stringify(c)).not.toContain('tok-secret');
+  });
+
+  it('--keep-query 保留参数值，但遮掉令牌和长数字', async () => {
+    const c = await describeCall({
+      method: 'GET', url: 'https://x.fudan.edu.cn/api/search?queryPage__=1%2C20&studentId=22307130001&access_token=tok-secret&keyword=数据结构', status: 200, contentType: 'application/json',
+      body: async () => '{}',
+    }, { keepQuery: true });
+    expect(c?.query).toEqual({ queryPage__: '1,20', studentId: '<数字>', access_token: '***', keyword: '数据结构' });
+    expect(leaks(c)).toEqual([]);
+  });
+
+  it('转换响应头：去掉 Set-Cookie，合并后的换行换成逗号；错误信息里的令牌遮掉', () => {
+    expect(safeHeaders({ 'set-cookie': '_csrf_token=abc; path=/\nother=1', link: '<a>; rel="next"\n<b>; rel="last"', 'content-type': 'application/json' }))
+      .toEqual({ link: '<a>; rel="next", <b>; rel="last"', 'content-type': 'application/json' });
+    expect(redact('Headers.append: "_csrf_token=HljbHjieol%2BIGSoxmOi%2Fx2gM8t76idpr; path=/; secure"')).toBe('Headers.append: "_csrf_token=***; path=/; secure"');
+    expect(redact('bad value eyJhbGciOiJIUzI1NiJ9abcdefghijklmnopqrstuvwxyz0123')).toBe('bad value ***');
   });
 });

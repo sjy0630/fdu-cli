@@ -20,13 +20,20 @@ export class FduError extends Error {
   }
 }
 
+/** 错误信息里可能夹带 Cookie、令牌：像「名字=很长的值」和很长的随机串一律遮掉 */
+export function redact(s: string): string {
+  return s
+    .replace(/([\w-]*(?:token|csrf|session|cookie|ticket|auth|key|sid)[\w-]*)=([^;\s"',&]+)/gi, '$1=***')
+    .replace(/[A-Za-z0-9%+/_-]{32,}={0,2}/g, '***');
+}
+
 /** 把各模块抛出的错误统一成 FduError */
 export function toFduError(e: unknown): FduError {
   if (e instanceof FduError) return e;
   if (e instanceof NeedLoginError) return new FduError('NEED_LOGIN', '复旦账号没有登录或登录已过期。', '运行 `fdu login`，在弹出的浏览器里登录复旦统一身份认证。');
   const err = e as { name?: string; message?: string; status?: number };
   // Playwright 的报错后面带一大段调用日志和终端颜色，只留第一行
-  const message = String(err?.message ?? e).replace(/\u001b\[[0-9;]*m/g, '').split(/\nCall log:|\n/)[0].replace(/^apiRequestContext\.\w+:\s*/, '');
+  const message = redact(String(err?.message ?? e).replace(/\u001b\[[0-9;]*m/g, '').split(/\nCall log:|\n/)[0].replace(/^apiRequestContext\.\w+:\s*/, ''));
   if (err?.name === 'TreeholeLoginError') return new FduError('NEED_HOLE_LOGIN', '需要登录树洞账号。', '运行 `fdu hole login --email 学号@m.fudan.edu.cn`（密码只用来换取令牌，不保存）。');
   if (err?.name === 'TimetableFormatError') return new FduError('FORMAT_CHANGED', message);
   if (err?.status === 403) return new FduError('PERMISSION', message);

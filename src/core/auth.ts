@@ -7,6 +7,19 @@ const JW_HOME = 'https://fdjwgl.fudan.edu.cn/student/home';
 const WEBVPN_HOME = 'https://webvpn.fudan.edu.cn/';
 const WEBVPN_CAS = 'https://webvpn.fudan.edu.cn/login?cas_login=true';
 
+/**
+ * 把响应头转成标准 Headers 能接受的形式：Cookie 已经由会话保存，这里不需要 Set-Cookie；
+ * 同名头被合并时值里会有换行（标准 Headers 不允许），换成逗号。
+ */
+export function safeHeaders(h: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(h)) {
+    if (k.toLowerCase() === 'set-cookie') continue;
+    out[k] = v.replace(/[\r\n]+/g, ', ');
+  }
+  return out;
+}
+
 /** CanvasClient 等模块用的认证接口：返回标准 Response */
 export function sessionAuth(session: Session): FudanAuth {
   return {
@@ -15,7 +28,7 @@ export function sessionAuth(session: Session): FudanAuth {
       new Headers(init?.headers).forEach((v, k) => { headers[k] = v; });
       const r = await session.fetch(platform, url, { method: init?.method, headers, body: typeof init?.body === 'string' ? init.body : undefined });
       const nullBody = [101, 204, 205, 304].includes(r.status);
-      const res = new Response(nullBody ? null : new Uint8Array(r.body), { status: r.status, headers: r.headers });
+      const res = new Response(nullBody ? null : new Uint8Array(r.body), { status: r.status, headers: safeHeaders(r.headers) });
       Object.defineProperty(res, 'url', { value: r.url });
       if (res.status === 401 && !(await isPermissionDenied(res))) throw new NeedLoginError(platform);
       return res;
@@ -80,8 +93,17 @@ export async function login(session: Session, opts: { webvpn?: boolean; timeoutM
   let user = existing;
   if (!user) {
     opts.onWaiting?.('已打开浏览器，请在学校的登录页面里完成登录（最长等待 5 分钟）……');
-    await session.withPage(PLATFORM_URLS.elearning.entry, async (page) => {
+    // 直接从 eLearning 的统一身份认证入口开始（会马上跳到学校的登录页），不停在 eLearning 首页等你点「登录」；
+    // 这个入口不存在时退回 /login
+    const startedAt = Date.now();
+    let fellBack = false;
+    await session.withPage(`${PLATFORM_URLS.elearning.base}/login/cas`, async (page) => {
       if (new URL(page.url()).origin !== PLATFORM_URLS.elearning.base) return false;
+      if (!fellBack && Date.now() - startedAt > 8000 && new URL(page.url()).pathname.startsWith('/login/cas')) {
+        fellBack = true;
+        await page.goto(`${PLATFORM_URLS.elearning.base}/login`).catch(() => undefined);
+        return false;
+      }
       try {
         const r = await page.request.get(ELEARNING_SELF, { headers: { Accept: 'application/json' }, failOnStatusCode: false });
         const data = r.ok() ? await r.json() as { id?: number } : null;
@@ -94,8 +116,15 @@ export async function login(session: Session, opts: { webvpn?: boolean; timeoutM
   // 教务系统的单点登录最后一步靠页面脚本，在无界面浏览器里走一遍
   let jwfw = await platformStatus(session, 'jwfw');
   if (jwfw !== 'ok') {
-    await session.withPage(JW_HOME, (page) => new URL(page.url()).hostname === 'fdjwgl.fudan.edu.cn', { headless: true, timeoutMs: 25_000, platform: 'jwfw' }).catch(() => undefined);
-    jwfw = await platformStatus(session, 'jwfw');
+    // 要等跳转全部走完、停在教务系统首页，才算单点登录完成
+    await session.withPage(JW_HOME, (page) => {
+      const u = new URL(page.url());
+      return u.hostname === 'fdjwgl.fudan.edu.cn' && u.pathname.startsWith('/student/home');
+    }, { headless: true, timeoutMs: 25_000, platform: 'jwfw' }).catch(() => undefined);
+    for (let i = 0; i < 3 && jwfw !== 'ok'; i++) {
+      jwfw = await platformStatus(session, 'jwfw');
+      if (jwfw !== 'ok') await new Promise((r) => setTimeout(r, 1500));
+    }
   }
   let webvpn: boolean | undefined;
   if (opts.webvpn) {

@@ -145,7 +145,7 @@ export class Session {
    * 打开有界面的浏览器，记录页面发出的数据请求（开发新功能时用，见 fdu dev capture）。
    * 每个请求交给 onResponse 处理（只应保留结构，不保留内容）；用户关掉窗口或超时后结束，Cookie 写回会话。
    */
-  async record(url: string, onResponse: (r: { method: string; url: string; status: number; contentType: string; resourceType: string; body: () => Promise<string>; postData?: string }) => Promise<void>, timeoutMs = 600_000): Promise<void> {
+  async record(url: string, onResponse: (r: { method: string; url: string; status: number; contentType: string; resourceType: string; body: () => Promise<string>; postData?: string; requestHeaders: Record<string, string> }) => Promise<void>, timeoutMs = 600_000): Promise<void> {
     const browser = await this.launch(false);
     const context = await browser.newContext({ storageState: await this.state(), proxy: proxyFromEnv(), viewport: null });
     const pending: Promise<void>[] = [];
@@ -154,16 +154,19 @@ export class Session {
       if (!['xhr', 'fetch', 'document'].includes(req.resourceType())) return;
       pending.push(onResponse({
         method: req.method(), url: res.url(), status: res.status(), contentType: res.headers()['content-type'] ?? '', resourceType: req.resourceType(),
-        body: () => res.text(), postData: req.postData() ?? undefined,
+        body: () => res.text(), postData: req.postData() ?? undefined, requestHeaders: req.headers(),
       }).catch(() => undefined));
     });
     try {
       const page = await context.newPage();
       void page.goto(url, { timeout: 60_000 }).catch(() => undefined);
+      let timer: NodeJS.Timeout | undefined;
       await Promise.race([
         new Promise<void>((resolve) => { context.on('close', () => resolve()); browser.on('disconnected', () => resolve()); page.on('close', () => resolve()); }),
-        sleep(timeoutMs),
+        new Promise<void>((resolve) => { timer = setTimeout(resolve, timeoutMs); }),
       ]);
+      // 清掉计时器，否则窗口关了命令也要等到超时才退出
+      clearTimeout(timer);
       await Promise.all(pending);
       if (browser.isConnected()) {
         const state = await context.storageState().catch(() => undefined);

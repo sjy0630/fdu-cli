@@ -1,4 +1,5 @@
 import { load } from 'cheerio';
+import { redact } from '../core/errors';
 
 /**
  * fdu dev capture 用：把页面发出的请求整理成「接口结构」，去掉一切具体内容。
@@ -42,9 +43,12 @@ export function htmlOutline(html: string): { title?: string; tables: string[][];
 
 export interface CapturedCall {
   method: string;
-  /** 协议 + 主机 + 路径，不含查询值 */
+  /** 协议 + 主机 + 路径，不含查询值；路径里的长数字、编号换成 {id} */
   endpoint: string;
-  query: string[];
+  /** 参数名；加了 --keep-query 时是「参数名: 值」（令牌、长数字已遮掉） */
+  query: string[] | Record<string, string>;
+  /** 非标准的请求头（只有名字；Authorization 只留认证方式），用来看系统怎么传登录令牌 */
+  headers?: Record<string, string>;
   /** 表单或 JSON 请求体里的字段名 */
   bodyFields: string[];
   status: number;
@@ -52,21 +56,58 @@ export interface CapturedCall {
   response: Shape | ReturnType<typeof htmlOutline> | string;
 }
 
+const FIELD = /^[\w.\[\]-]{1,60}$/;
+
+/** 请求体的字段名；不是表单 / JSON 对象的请求体（比如一段日志）不记内容 */
 function fieldsOf(postData?: string): string[] {
   if (!postData) return [];
   try {
     const j = JSON.parse(postData) as unknown;
-    if (j && typeof j === 'object' && !Array.isArray(j)) return Object.keys(j);
+    if (j && typeof j === 'object' && !Array.isArray(j)) return Object.keys(j).filter((k) => FIELD.test(k));
+    return ['<JSON 数组，已省略>'];
   } catch { /* 不是 JSON，按表单处理 */ }
-  try { return [...new URLSearchParams(postData).keys()]; } catch { return []; }
+  try {
+    const keys = [...new URLSearchParams(postData).keys()];
+    return keys.length && keys.every((k) => FIELD.test(k)) ? keys : ['<非表单数据，已省略>'];
+  } catch { return ['<非表单数据，已省略>']; }
+}
+
+/** 路径里的长数字（学生编号、记录 id）、UUID、长随机串换成 {id} */
+export function maskPath(path: string): string {
+  return path.split('/').map((seg) => /^\d{4,}$/.test(seg) || /^[0-9a-f-]{20,}$/i.test(seg) || /^[A-Za-z0-9_-]{24,}$/.test(seg) ? '{id}' : seg).join('/');
+}
+
+/** 浏览器自己会带的头不记；Authorization 只留认证方式，其余自定义头只留名字 */
+const STANDARD = /^(accept|accept-.*|user-agent|referer|origin|cookie|connection|host|content-length|dnt|cache-control|pragma|sec-.*|upgrade-insecure-requests|priority|if-.*|range)$/i;
+function headerNames(h?: Record<string, string>): Record<string, string> | undefined {
+  if (!h) return undefined;
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(h)) {
+    if (STANDARD.test(k)) continue;
+    if (/^content-type$/i.test(k)) { out[k] = v.split(';')[0]; continue; }
+    if (/^authorization$/i.test(k)) { out[k] = `${v.split(/\s+/)[0]} ***`; continue; }
+    out[k] = '***';
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+/** --keep-query：保留查询参数的值，但遮掉令牌和长数字（学号、编号） */
+function queryValues(u: URL): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of u.searchParams) {
+    const secretName = /token|secret|passw|ticket/i.test(k) || /^(?:.*[_-])?(?:code|sign|signature|auth|key|apikey|session|sessionid|sid|pass)$/i.test(k);
+    const masked = secretName ? '***' : redact(v).replace(/\d{8,}/g, '<数字>').slice(0, 60);
+    out[k] = masked;
+  }
+  return out;
 }
 
 /** 一次请求 → 去掉内容的结构 */
-export async function describeCall(r: { method: string; url: string; status: number; contentType: string; body: () => Promise<string>; postData?: string }): Promise<CapturedCall | null> {
+export async function describeCall(r: { method: string; url: string; status: number; contentType: string; body: () => Promise<string>; postData?: string; requestHeaders?: Record<string, string> }, opts: { keepQuery?: boolean } = {}): Promise<CapturedCall | null> {
   let u: URL;
   try { u = new URL(r.url); } catch { return null; }
-  // 静态资源和统计脚本不记
-  if (/\.(js|css|png|jpe?g|gif|svg|woff2?|ico|map)$/i.test(u.pathname)) return null;
+  // 静态资源、统计和监控请求不记
+  if (/\.(js|css|png|jpe?g|gif|svg|woff2?|ico|map)$/i.test(u.pathname) || /(^|\.)(mon-mp|hm\.baidu|google-analytics|cnzz)\b/i.test(u.hostname)) return null;
   const text = await r.body().catch(() => '');
   let response: CapturedCall['response'] = `${r.contentType.split(';')[0] || '未知类型'}（${text.length} 字节）`;
   const trimmed = text.trim();
@@ -76,8 +117,10 @@ export async function describeCall(r: { method: string; url: string; status: num
     const inner = /<!\[CDATA\[([\s\S]*?)\]\]>/.exec(trimmed)?.[1] ?? trimmed;
     response = htmlOutline(inner);
   }
+  const headers = headerNames(r.requestHeaders);
   return {
-    method: r.method, endpoint: `${u.origin}${u.pathname}`, query: [...new Set(u.searchParams.keys())], bodyFields: fieldsOf(r.postData),
+    method: r.method, endpoint: `${u.origin}${maskPath(u.pathname)}`, query: opts.keepQuery ? queryValues(u) : [...new Set(u.searchParams.keys())],
+    ...(headers ? { headers } : {}), bodyFields: fieldsOf(r.postData),
     status: r.status, contentType: r.contentType.split(';')[0], response,
   };
 }
@@ -89,7 +132,8 @@ export function dedupe(calls: CapturedCall[]): CapturedCall[] {
     const k = `${c.method} ${c.endpoint}`;
     const prev = map.get(k);
     if (!prev) map.set(k, c);
-    else prev.query = [...new Set([...prev.query, ...c.query])];
+    else if (Array.isArray(prev.query) && Array.isArray(c.query)) prev.query = [...new Set([...prev.query, ...c.query])];
+    else if (!Array.isArray(prev.query) && !Array.isArray(c.query)) prev.query = { ...prev.query, ...c.query };
   }
   return [...map.values()];
 }
