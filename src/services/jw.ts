@@ -156,8 +156,12 @@ export async function readLessons(reader: CampusReader, opts: { keyword: string;
 export function htmlToText(html: string): string {
   const $ = load(html);
   $('script, style, noscript, head, nav, header, footer').remove();
+  // 表格：每行一行，单元格之间用「 | 」隔开（单元格里的换行合成空格）
+  $('tr').each((_, tr) => {
+    const cells = $(tr).children('td, th').map((_i, c) => $(c).text().replace(/\s+/g, ' ').trim()).get();
+    $(tr).replaceWith($('<div></div>').text(cells.filter(Boolean).join(' | ')));
+  });
   $('br').replaceWith('\n');
-  $('td, th').each((_, el) => { $(el).append(' | '); });
   $('p, div, tr, li, h1, h2, h3, h4, h5, h6, table, section').each((_, el) => { $(el).append('\n'); });
   return $.root().text()
     .replace(/[ \t\u00a0]+/g, ' ')
@@ -166,9 +170,50 @@ export function htmlToText(html: string): string {
     .split('\n').map((l) => l.trim()).filter(Boolean).join('\n');
 }
 
+/** 大纲页面脚本里的变量（`let 名字 = 字面量`），读不到时返回 undefined */
+function pageVar(html: string, name: string): unknown {
+  const m = new RegExp(`(?:let|var|const)\\s+${name}\\s*=\\s*([\\[{'])`).exec(html);
+  if (!m) return undefined;
+  const at = m.index + m[0].length - 1;
+  if (m[1] === "'") {
+    const end = html.indexOf("'", at + 1);
+    return (parseJsLiteral(`[${html.slice(at, end + 1)}]`, 0) as unknown[] | undefined)?.[0];
+  }
+  return parseJsLiteral(html, at);
+}
+
+type Dict = Record<string, unknown>;
+const s2 = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
+
+/** 大纲页面 → 结构化数据：基本信息、各段正文、考核方式和权重、教材、教学团队 */
+export function parseSyllabusPage(html: string) {
+  const model = pageVar(html, 'model') as Dict | undefined;
+  if (!model) return undefined;
+  const course = (pageVar(html, 'course') ?? model.course ?? {}) as Dict;
+  const paragraphs = (((model.structuredDocument as Dict | undefined)?.paragraphs ?? []) as Dict[]);
+  const sections = paragraphs.map((p) => ({ title: s2(p.titleZh) ?? s2(p.titleEn) ?? '', text: htmlToText(String(p.contentZh ?? p.contentEn ?? '')) })).filter((x) => x.text);
+  const exams = ((pageVar(html, 'examGradeList') ?? model.examGradeList ?? []) as Dict[]).map((e) => ({ item: s2(e.criteria) ?? '', percent: typeof e.percentage === 'number' ? e.percentage : undefined, standard: s2(e.standard) }));
+  const books = ((pageVar(html, 'textbookList') ?? model.textbookList ?? []) as Dict[]).map((b) => ({ title: s2(b.name) ?? '', author: s2(b.author), publisher: s2(b.publishingHouse), date: s2(b.date) }));
+  const team = ((pageVar(html, 'memberList') ?? model.memberList ?? []) as Dict[]).map((t) => ({ name: s2(t.name) ?? '', title: s2(t.title), department: s2(t.department), duty: s2(t.teachingContent), email: s2(t.email) }));
+  const grading = s2(pageVar(html, 'gradeCalcRule'));
+  return {
+    course: {
+      code: s2(course.code), name: s2(course.nameZh), nameEn: s2(course.nameEn),
+      credits: typeof course.credits === 'number' ? course.credits : undefined,
+      hours: typeof course.totalPeriods === 'number' ? course.totalPeriods : undefined,
+      subject: s2(course.firstSubject), prerequisites: s2(course.preCourses),
+    },
+    sections,
+    assessment: { items: exams, ...(grading ? { grading } : {}) },
+    textbooks: books,
+    team,
+  };
+}
+
 /**
- * 某个教学班的教学大纲（全校开课查询里「教学大纲」那一页），转成纯文本给 AI 读。
- * 页面内容靠脚本加载时，在无界面浏览器里等加载完再读。
+ * 某个教学班的教学大纲（全校开课查询里「教学大纲」那一页）。
+ * 内容在页面脚本的变量里（课程信息、各段正文、考核、教材、教学团队），只做字面量解析、不执行页面代码；
+ * 读不到这些变量时，退回把页面转成纯文本。
  */
 export async function readSyllabus(reader: CampusReader, lessonId: string, maxChars = 30_000) {
   if (!/^\d+$/.test(lessonId)) throw Object.assign(new Error('教学班 id 应该是数字（来自 fdu jw lessons 的 id）。'), { code: 'BAD_ARGS' });
@@ -183,6 +228,11 @@ export async function readSyllabus(reader: CampusReader, lessonId: string, maxCh
   const url = `${LESSON_SEARCH}/teachingSyllabusInfo/${lessonId}`;
   const page = await reader.getText(url);
   if (page.status >= 400) throw new Error(`教务系统返回 ${page.status}`);
+  const structured = parseSyllabusPage(page.text);
+  if (structured) {
+    const cap = (t: string) => (t.length > maxChars ? `${t.slice(0, maxChars)}…（已截断）` : t);
+    return { lessonId, ...(notice ? { notice } : {}), available: structured.sections.length > 0 || structured.assessment.items.length > 0, ...structured, sections: structured.sections.map((x) => ({ ...x, text: cap(x.text) })) };
+  }
   let text = htmlToText(page.text);
   if (text.length < 120 && reader.render) text = htmlToText(await reader.render(url, (h) => htmlToText(h).length >= 200));
   return {
@@ -192,4 +242,42 @@ export async function readSyllabus(reader: CampusReader, lessonId: string, maxCh
     ...(text.length > maxChars ? { truncated: true } : {}),
     text: text.slice(0, maxChars),
   };
+}
+
+/**
+ * 页面脚本里的 JS 对象字面量（单引号字符串、\uXXXX 转义）→ 数据。只做字面量转换，不执行任何代码。
+ * 从 start 之后第一个 { 或 [ 开始，找到配对的括号为止。
+ */
+export function parseJsLiteral(src: string, start: number): unknown {
+  const braces = [src.indexOf('{', start), src.indexOf('[', start)].filter((i) => i >= 0);
+  if (!braces.length) return undefined;
+  const open = Math.min(...braces);
+  let out = '';
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    const c = src[i];
+    if (c === "'" || c === '"') {
+      // 字符串：读到配对的引号，转成 JSON 字符串
+      let buf = '';
+      let j = i + 1;
+      for (; j < src.length && src[j] !== c; j++) {
+        if (src[j] === '\\') {
+          const nx = src[j + 1];
+          if (nx === 'u') { buf += String.fromCharCode(parseInt(src.slice(j + 2, j + 6), 16)); j += 5; continue; }
+          buf += ({ n: '\n', r: '\r', t: '\t', b: '\b', f: '\f' } as Record<string, string>)[nx] ?? nx;
+          j++;
+          continue;
+        }
+        buf += src[j];
+      }
+      out += JSON.stringify(buf);
+      i = j;
+      continue;
+    }
+    if (c === '{' || c === '[') depth++;
+    if (c === '}' || c === ']') depth--;
+    out += c;
+    if (depth === 0) break;
+  }
+  try { return JSON.parse(out); } catch { return undefined; }
 }

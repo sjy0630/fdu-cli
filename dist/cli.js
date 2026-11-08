@@ -1399,14 +1399,52 @@ async function readLessons(reader, opts) {
 function htmlToText(html) {
   const $ = load5(html);
   $("script, style, noscript, head, nav, header, footer").remove();
-  $("br").replaceWith("\n");
-  $("td, th").each((_, el) => {
-    $(el).append(" | ");
+  $("tr").each((_, tr) => {
+    const cells = $(tr).children("td, th").map((_i, c) => $(c).text().replace(/\s+/g, " ").trim()).get();
+    $(tr).replaceWith($("<div></div>").text(cells.filter(Boolean).join(" | ")));
   });
+  $("br").replaceWith("\n");
   $("p, div, tr, li, h1, h2, h3, h4, h5, h6, table, section").each((_, el) => {
     $(el).append("\n");
   });
   return $.root().text().replace(/[ \t\u00a0]+/g, " ").replace(/ ?\| ?(\n|$)/g, "$1").replace(/\n\s*\n+/g, "\n").split("\n").map((l) => l.trim()).filter(Boolean).join("\n");
+}
+function pageVar(html, name) {
+  const m = new RegExp(`(?:let|var|const)\\s+${name}\\s*=\\s*([\\[{'])`).exec(html);
+  if (!m) return void 0;
+  const at = m.index + m[0].length - 1;
+  if (m[1] === "'") {
+    const end = html.indexOf("'", at + 1);
+    return parseJsLiteral(`[${html.slice(at, end + 1)}]`, 0)?.[0];
+  }
+  return parseJsLiteral(html, at);
+}
+var s2 = (v) => typeof v === "string" && v.trim() ? v.trim() : void 0;
+function parseSyllabusPage(html) {
+  const model = pageVar(html, "model");
+  if (!model) return void 0;
+  const course = pageVar(html, "course") ?? model.course ?? {};
+  const paragraphs = model.structuredDocument?.paragraphs ?? [];
+  const sections = paragraphs.map((p) => ({ title: s2(p.titleZh) ?? s2(p.titleEn) ?? "", text: htmlToText(String(p.contentZh ?? p.contentEn ?? "")) })).filter((x) => x.text);
+  const exams = (pageVar(html, "examGradeList") ?? model.examGradeList ?? []).map((e) => ({ item: s2(e.criteria) ?? "", percent: typeof e.percentage === "number" ? e.percentage : void 0, standard: s2(e.standard) }));
+  const books = (pageVar(html, "textbookList") ?? model.textbookList ?? []).map((b) => ({ title: s2(b.name) ?? "", author: s2(b.author), publisher: s2(b.publishingHouse), date: s2(b.date) }));
+  const team = (pageVar(html, "memberList") ?? model.memberList ?? []).map((t) => ({ name: s2(t.name) ?? "", title: s2(t.title), department: s2(t.department), duty: s2(t.teachingContent), email: s2(t.email) }));
+  const grading = s2(pageVar(html, "gradeCalcRule"));
+  return {
+    course: {
+      code: s2(course.code),
+      name: s2(course.nameZh),
+      nameEn: s2(course.nameEn),
+      credits: typeof course.credits === "number" ? course.credits : void 0,
+      hours: typeof course.totalPeriods === "number" ? course.totalPeriods : void 0,
+      subject: s2(course.firstSubject),
+      prerequisites: s2(course.preCourses)
+    },
+    sections,
+    assessment: { items: exams, ...grading ? { grading } : {} },
+    textbooks: books,
+    team
+  };
 }
 async function readSyllabus(reader, lessonId, maxChars = 3e4) {
   if (!/^\d+$/.test(lessonId)) throw Object.assign(new Error("\u6559\u5B66\u73ED id \u5E94\u8BE5\u662F\u6570\u5B57\uFF08\u6765\u81EA fdu jw lessons \u7684 id\uFF09\u3002"), { code: "BAD_ARGS" });
@@ -1421,6 +1459,11 @@ async function readSyllabus(reader, lessonId, maxChars = 3e4) {
   const url = `${LESSON_SEARCH}/teachingSyllabusInfo/${lessonId}`;
   const page = await reader.getText(url);
   if (page.status >= 400) throw new Error(`\u6559\u52A1\u7CFB\u7EDF\u8FD4\u56DE ${page.status}`);
+  const structured = parseSyllabusPage(page.text);
+  if (structured) {
+    const cap = (t) => t.length > maxChars ? `${t.slice(0, maxChars)}\u2026\uFF08\u5DF2\u622A\u65AD\uFF09` : t;
+    return { lessonId, ...notice ? { notice } : {}, available: structured.sections.length > 0 || structured.assessment.items.length > 0, ...structured, sections: structured.sections.map((x) => ({ ...x, text: cap(x.text) })) };
+  }
   let text = htmlToText(page.text);
   if (text.length < 120 && reader.render) text = htmlToText(await reader.render(url, (h) => htmlToText(h).length >= 200));
   return {
@@ -1430,6 +1473,46 @@ async function readSyllabus(reader, lessonId, maxChars = 3e4) {
     ...text.length > maxChars ? { truncated: true } : {},
     text: text.slice(0, maxChars)
   };
+}
+function parseJsLiteral(src, start) {
+  const braces = [src.indexOf("{", start), src.indexOf("[", start)].filter((i) => i >= 0);
+  if (!braces.length) return void 0;
+  const open = Math.min(...braces);
+  let out = "";
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    const c = src[i];
+    if (c === "'" || c === '"') {
+      let buf = "";
+      let j = i + 1;
+      for (; j < src.length && src[j] !== c; j++) {
+        if (src[j] === "\\") {
+          const nx = src[j + 1];
+          if (nx === "u") {
+            buf += String.fromCharCode(parseInt(src.slice(j + 2, j + 6), 16));
+            j += 5;
+            continue;
+          }
+          buf += { n: "\n", r: "\r", t: "	", b: "\b", f: "\f" }[nx] ?? nx;
+          j++;
+          continue;
+        }
+        buf += src[j];
+      }
+      out += JSON.stringify(buf);
+      i = j;
+      continue;
+    }
+    if (c === "{" || c === "[") depth++;
+    if (c === "}" || c === "]") depth--;
+    out += c;
+    if (depth === 0) break;
+  }
+  try {
+    return JSON.parse(out);
+  } catch {
+    return void 0;
+  }
 }
 
 // src/services/library-search.ts

@@ -107,7 +107,7 @@ describe('教学大纲', () => {
     const r = await readSyllabus(reader, '1037803');
     expect(rendered).toEqual(['https://fdjwgl.fudan.edu.cn/student/for-std/lesson-search/teachingSyllabusInfo/1037803']);
     expect(r).toMatchObject({ lessonId: '1037803', notice: '教学大纲由任课教师提供（演示）', available: true });
-    expect(r.text.startsWith('考核方式\n平时作业 40%')).toBe(true);
+    expect((r as { text: string }).text.startsWith('考核方式\n平时作业 40%')).toBe(true);
     await expect(readSyllabus(reader, '../x')).rejects.toThrow('数字');
   });
 
@@ -148,5 +148,41 @@ describe('图书馆令牌', () => {
     expect(store.readJson('library.json')).toBeNull();
     store.writeJson('library.json', { token: 't', expiresAt: '2026-11-01T00:00:00Z' });
     expect(await runOp(op, ctx, {})).toMatchObject({ ok: false, error: { code: 'NEED_LOGIN' } });
+  });
+});
+
+describe('教学大纲页面里的数据', () => {
+  const u = (t: string) => [...t].map((c) => (c.charCodeAt(0) > 127 ? `\\u${c.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}` : c)).join('');
+  const page = `<html><body><h3>大纲详细信息</h3><script>
+    $(function () {
+      let model =  {'structuredDocument':{'paragraphs':[
+        {'titleZh':'${u('课程简介（中文）')}','contentZh':'<p>${u('数据结构是计算机专业的基础课（演示）。')}<\\/p>','contentEn':null},
+        {'titleZh':'${u('教学内容与进度安排')}','contentZh':'<table border=\\"1\\"><tr><td><p>${u('第1周')}<\\/p><\\/td><td>${u('线性表')}<\\/td><\\/tr><tr><td>${u('第2周')}<\\/td><td>${u('栈和队列')}<\\/td><\\/tr><\\/table>'},
+        {'titleZh':'${u('教材')}','contentZh':''}]},'id':1};
+      let course =  {'code':'COMP130004','nameZh':'${u('数据结构（演示）')}','credits':3.0,'totalPeriods':54.0,'preCourses':''};
+      let examGradeList = [{'criteria':'${u('期中考试')}','percentage':30.0,'standard':'${u('卷面分')}'},{'criteria':'${u('期末考试：闭卷')}','percentage':70.0,'standard':null}];
+      let memberList = [{'name':'${u('王老师（虚构）')}','title':'${u('副教授')}','department':'${u('演示学院')}','teachingContent':'${u('主讲')}','email':'demo@example.com'}];
+      let textbookList = [{'author':'${u('某作者')}','date':'2020-01','isbn':'978','name':'${u('数据结构教程（演示）')}','publishingHouse':'${u('演示出版社')}'}];
+      let gradeCalcRule = '${u('等级制')}';
+    });</script></body></html>`;
+
+  it('只做字面量解析：基本信息、各段正文（表格按行）、考核和权重、教材、教学团队', async () => {
+    const { parseSyllabusPage } = await import('../src/services/jw');
+    const r = parseSyllabusPage(page)!;
+    expect(r.course).toMatchObject({ code: 'COMP130004', name: '数据结构（演示）', credits: 3, hours: 54 });
+    expect(r.sections).toEqual([
+      { title: '课程简介（中文）', text: '数据结构是计算机专业的基础课（演示）。' },
+      { title: '教学内容与进度安排', text: '第1周 | 线性表\n第2周 | 栈和队列' },
+    ]);
+    expect(r.assessment).toEqual({ items: [{ item: '期中考试', percent: 30, standard: '卷面分' }, { item: '期末考试：闭卷', percent: 70, standard: undefined }], grading: '等级制' });
+    expect(r.textbooks).toEqual([{ title: '数据结构教程（演示）', author: '某作者', publisher: '演示出版社', date: '2020-01' }]);
+    expect(r.team[0]).toMatchObject({ name: '王老师（虚构）', title: '副教授', duty: '主讲' });
+    expect(parseSyllabusPage('<html>没有数据</html>')).toBeUndefined();
+  });
+
+  it('字面量解析不执行代码，转义和嵌套都能处理', async () => {
+    const { parseJsLiteral } = await import('../src/services/jw');
+    expect(parseJsLiteral("x = {'a':'\\u4E2D\\'b\\\"','b':[1,{'c':null}],'d':true};", 0)).toEqual({ a: "中'b\"", b: [1, { c: null }], d: true });
+    expect(parseJsLiteral("let l = [{'x':'}'}];", 0)).toEqual([{ x: '}' }]);
   });
 });
