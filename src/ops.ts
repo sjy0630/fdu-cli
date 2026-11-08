@@ -105,9 +105,15 @@ async function assignmentsOf(ctx: Ctx, courses: CanvasCourse[]) {
   return lists.flat().sort((a, b) => (a.dueAt ?? '9').localeCompare(b.dueAt ?? '9'));
 }
 
-/** 文件名里去掉路径和不能用的字符；已存在时加 (1)、(2)，绝不覆盖 */
+/**
+ * 文件名里去掉路径和不能用的字符；已存在时加 (1)、(2)，绝不覆盖。
+ * 不用 path.basename：Windows 上它会把「a:b」里的「a:」当成盘符丢掉。
+ */
 export function safeTarget(dir: string, name: string): string {
-  const clean = basename(name).replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').replace(/^\.+/, '_').slice(0, 180) || 'download';
+  const last = name.split(/[\\/]/).pop() ?? '';
+  let clean = last.replace(/[:*?"<>|\u0000-\u001f]/g, '_').replace(/^\.+/, '_').replace(/[. ]+$/, '').slice(0, 180) || 'download';
+  // Windows 的保留名（CON、NUL、COM1……）不能当文件名
+  if (/^(con|prn|aux|nul|com\d|lpt\d)(\.|$)/i.test(clean)) clean = `_${clean}`;
   const ext = extname(clean);
   const stem = clean.slice(0, clean.length - ext.length);
   let target = join(dir, clean);

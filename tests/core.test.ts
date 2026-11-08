@@ -117,6 +117,9 @@ describe('本地文件', () => {
     expect(safeTarget(dir, '第5讲.pdf')).toBe(join(dir, '第5讲 (1).pdf'));
     expect(safeTarget(dir, '../../etc/passwd')).toBe(join(dir, 'passwd'));
     expect(safeTarget(dir, 'a:b?.txt')).toBe(join(dir, 'a_b_.txt'));
+    expect(safeTarget(dir, '..\\..\\x.pdf')).toBe(join(dir, 'x.pdf'));
+    expect(safeTarget(dir, 'CON.txt')).toBe(join(dir, '_CON.txt'));
+    expect(safeTarget(dir, 'notes. ')).toBe(join(dir, 'notes'));
   });
 
   it('代理：HTTPS_PROXY / NO_PROXY', () => {
@@ -188,6 +191,7 @@ describe('会话', () => {
 describe('文档', () => {
   it('skills/fdu-cli/reference.md 是最新的（改了命令请运行 npm run docs）', async () => {
     const { referenceMarkdown } = await import('../src/reference');
-    expect(readFileSync(new URL('../skills/fdu-cli/reference.md', import.meta.url), 'utf8')).toBe(referenceMarkdown());
+    // Windows 上签出时换行可能被改成 CRLF，比较内容时忽略换行符差异
+    expect(readFileSync(new URL('../skills/fdu-cli/reference.md', import.meta.url), 'utf8').replace(/\r\n/g, '\n')).toBe(referenceMarkdown());
   });
 });
