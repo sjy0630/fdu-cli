@@ -4,3 +4,8 @@ node_modules/
 # 本地登录状态，绝不提交
 state.json
 *.cookies.json
+# fdu dev capture 的录制结果（在项目目录里录制时）
+fdu-capture-*.json
+*.capture.json
+/*.html
+/syllabus*.json
