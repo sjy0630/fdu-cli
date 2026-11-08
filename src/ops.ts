@@ -1,7 +1,7 @@
 import { accessSync, constants as fsConstants, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { z } from 'zod';
-import { ensureWebvpn, login, platformStatus, sessionAuth, webvpnAlive } from './core/auth';
+import { ensureWebvpn, login, loginAt, platformStatus, sessionAuth, webvpnAlive } from './core/auth';
 import type { Cache } from './core/cache';
 import { FduError } from './core/errors';
 import type { Session } from './core/session';
@@ -10,7 +10,7 @@ import { readProgramCompletion, readSelectedCourses } from './services/academic'
 import { readCardBalance, readLibrary } from './services/campus-life';
 import { readElectricity } from './services/dorm';
 import { filterBus, readBus } from './services/bus';
-import { CANTEEN_URL, parseCanteen, readCanteen } from './services/canteen';
+import { readCanteen } from './services/canteen';
 import { CanvasClient, isAssignmentDone, type CanvasCourse } from './services/elearning';
 import { readGpaRank, readGrades, readStudentId } from './services/grades';
 import { readExams, readLessons, readSemesters, readSyllabus, readTimetable } from './services/jw';
@@ -47,6 +47,8 @@ export interface Ctx {
   now(): number;
   /** 查询结果缓存（没有时不缓存） */
   cache?: Cache;
+  /** 需要登录时尝试自动登录（弹出浏览器）；登录成功返回 true，命令会重试一次 */
+  relogin?(e: unknown): Promise<boolean>;
 }
 
 export type Effect = 'read' | 'local-write' | 'auth';
@@ -265,7 +267,7 @@ async function withLibrary<T>(ctx: Ctx, work: (getJson: LibGetJson) => Promise<T
   if (saved?.token) {
     if (saved.expiresAt && Date.parse(saved.expiresAt) < ctx.now()) {
       ctx.store.remove(LIB_TOKEN);
-      throw new FduError('NEED_LOGIN', '图书馆登录已过期。', LIB_LOGIN_HINT);
+      throw new FduError('NEED_LOGIN', '图书馆登录已过期。', LIB_LOGIN_HINT, { op: 'library.login' });
     }
     const headers = { access_token: saved.token, Accept: 'application/json', Origin: 'https://opac.fudan.edu.cn', Referer: OPAC };
     const getJson: LibGetJson = async (url) => {
@@ -275,7 +277,7 @@ async function withLibrary<T>(ctx: Ctx, work: (getJson: LibGetJson) => Promise<T
       return r;
     };
     try { return await work(getJson); } catch (e) {
-      if (e instanceof FduError && e.code === 'NEED_LOGIN') { ctx.store.remove(LIB_TOKEN); throw new FduError('NEED_LOGIN', '图书馆登录已过期。', LIB_LOGIN_HINT); }
+      if (e instanceof FduError && e.code === 'NEED_LOGIN') { ctx.store.remove(LIB_TOKEN); throw new FduError('NEED_LOGIN', '图书馆登录已过期。', LIB_LOGIN_HINT, { op: 'library.login' }); }
       throw e;
     }
   }
@@ -288,7 +290,7 @@ async function withLibrary<T>(ctx: Ctx, work: (getJson: LibGetJson) => Promise<T
     if (!token) {
       // 网页应用可能还在加载、刷新令牌，等一会儿
       if (Date.now() - started < 10_000) return false;
-      failure = new FduError('NEED_LOGIN', '还没有登录图书馆。', LIB_LOGIN_HINT);
+      failure = new FduError('NEED_LOGIN', '还没有登录图书馆。', LIB_LOGIN_HINT, { op: 'library.login' });
       return true;
     }
     const getJson: LibGetJson = (url) => page.evaluate(async ([u, t]: string[]) => {
@@ -313,8 +315,8 @@ async function roomsDayPage(ctx: Ctx, building: string, day: string): Promise<Da
   if (!ctx.session.hasState()) throw new NeedLoginError('jwfw');
   await ensureWebvpn(ctx.session);
   const r = await ctx.session.browserFetch(dayPageUrl(building, day), { timeoutMs: 30_000 });
-  if (/\/urp\/|authCenter|\/idp\//.test(r.url)) throw new FduError('NEED_LOGIN', '空教室系统需要登录。', ROOMS_LOGIN_HINT);
-  if (/webvpn\.fudan\.edu\.cn\/login/.test(r.url)) throw new FduError('NEED_LOGIN', 'WebVPN 登录已过期。', '运行 `fdu login --webvpn`。');
+  if (/\/urp\/|authCenter|\/idp\//.test(r.url)) throw new FduError('NEED_LOGIN', '空教室系统需要登录。', ROOMS_LOGIN_HINT, { op: 'rooms.login' });
+  if (/webvpn\.fudan\.edu\.cn\/login/.test(r.url)) throw new FduError('NEED_LOGIN', 'WebVPN 登录已过期。', '运行 `fdu login --webvpn`。', { op: 'auth.login', args: { webvpn: true } });
   return parseDayPage(r.text);
 }
 
@@ -341,17 +343,24 @@ const needPrompt = (ctx: Ctx) => {
   return ctx.prompt;
 };
 
-const CANTEEN_LOGIN_HINT = '运行 `fdu canteen login`，在打开的浏览器里按提示用微信扫码，看到页面后窗口会自动关闭。验证有效期由学校决定，过期后再运行一次。';
-
 export const OPS: Op[] = [
   // ======================= 账号 =======================
   op({
     name: 'auth.login', summary: '登录复旦统一身份认证：打开浏览器，你自己输入账号密码、完成二次验证；之后 eLearning、教务、校园卡等共用这个登录。',
     login: 'none', effect: 'auth',
-    params: { webvpn: flag('顺便建立 WebVPN 会话（校外访问树洞需要）'), force: flag('丢弃已有登录状态，重新登录') },
-    examples: ['fdu login', 'fdu login --webvpn'],
+    params: {
+      webvpn: flag('顺便建立 WebVPN 会话（校外访问树洞需要）'),
+      force: flag('丢弃已有登录状态，重新登录'),
+      url: z.string().url().optional().describe('打开这个页面完成登录或二次验证（如某些页面要求微信扫码），回到这个页面后窗口自动关闭'),
+    },
+    examples: ['fdu login', 'fdu login --webvpn', 'fdu login --url https://my.fudan.edu.cn/simple_list/stqk'],
     async run(ctx, a) {
       if (a.force) ctx.session.clear();
+      if (a.url) {
+        if (!ctx.session.hasState()) await login(ctx.session, { onWaiting: ctx.log });
+        if (!(await loginAt(ctx.session, { url: a.url }, { onWaiting: ctx.log }))) throw new FduError('NEED_LOGIN', '没有完成登录或二次验证。', `重新运行 \`fdu login --url ${a.url}\`，按页面提示完成后等窗口自动关闭。`);
+        return { loggedIn: true, url: a.url, stateFile: ctx.store.path('state.json') };
+      }
       const r = await login(ctx.session, { webvpn: a.webvpn, onWaiting: ctx.log });
       return { loggedIn: true, user: r.elearning.name, jwfw: r.jwfw, webvpn: r.webvpn, stateFile: ctx.store.path('state.json') };
     },
@@ -802,35 +811,12 @@ export const OPS: Op[] = [
     },
   }),
   op({
-    name: 'canteen.login', summary: '食堂人数页面要求二次验证（微信扫码）：打开浏览器，按页面提示完成验证，看到食堂人数或开放时段说明后窗口自动关闭。',
-    login: 'none', effect: 'auth', mcp: false, params: {},
-    async run(ctx) {
-      if (!ctx.session.hasState()) throw new NeedLoginError('jwfw');
-      ctx.log('已打开食堂人数页面：按提示用微信扫码完成二次验证；看到页面内容后窗口会自动关闭。');
-      const loaded = (html: string) => { try { parseCanteen(html); return true; } catch { return false; } };
-      let ok = false;
-      await ctx.session.withPage(CANTEEN_URL, (_page, html) => (ok = loaded(html)), { headless: false, timeoutMs: 300_000 });
-      if (!ok) throw new FduError('NEED_LOGIN', '没有完成二次验证。', CANTEEN_LOGIN_HINT);
-      await ctx.session.save();
-      return { verified: true };
-    },
-  }),
-  op({
     name: 'canteen.crowd', summary: '各食堂现在的就餐人数和容量（ratio = 人数 / 容量）。不在用餐时段时 open 为 false，并附上学校页面的说明。',
     login: 'uis', effect: 'read',
     params: { campus: z.string().optional().describe('只看某个校区：邯郸、枫林、江湾、张江') },
     examples: ['fdu canteen crowd', 'fdu canteen crowd --campus 邯郸'],
     async run(ctx, a) {
-      let r;
-      try {
-        r = await readCanteen(ctx.session.reader('jwfw'));
-      } catch (e) {
-        // 统一身份认证还有效却被拦在登录页：这个页面要的是二次验证
-        if (e instanceof NeedLoginError && (await platformStatus(ctx.session, 'jwfw')) === 'ok') {
-          throw new FduError('NEED_LOGIN', '食堂人数页面要求二次验证（微信扫码）。', CANTEEN_LOGIN_HINT);
-        }
-        throw e;
-      }
+      const r = await readCanteen(ctx.session.reader('jwfw'));
       const campuses = a.campus ? r.campuses.filter((c) => c.campus.includes(a.campus!.replace(/校区$/, ''))) : r.campuses;
       return { ...r, campuses, at: new Date(ctx.now()).toISOString() };
     },
@@ -1112,4 +1098,33 @@ export const OPS: Op[] = [
 
 export function findOp(name: string): Op | undefined {
   return OPS.find((o) => o.name === name);
+}
+
+/**
+ * 自动登录：命令遇到「需要登录」时，直接在浏览器里打开对应的页面，登录或完成二次验证后命令重试一次。
+ * - 统一身份认证（包括二次验证）：打开触发登录的那个页面；不知道是哪个页面时走 fdu login
+ * - 单独登录的系统（教室、图书馆、WebVPN）：运行它们的登录命令
+ * 同一时间只弹一个窗口，其他请求等它完成。设置 FDU_AUTO_LOGIN=0 关掉；FDU_LOGIN_WAIT 设等待秒数（默认 180）。
+ */
+const RELOGIN_LOCKS = new WeakMap<Session, Promise<boolean>>();
+
+export function autoLogin(ctx: Ctx, e: unknown): Promise<boolean> {
+  if (process.env.FDU_AUTO_LOGIN === '0') return Promise.resolve(false);
+  const timeoutMs = (Number(process.env.FDU_LOGIN_WAIT) || 180) * 1000;
+  let attempt: (() => Promise<boolean>) | undefined;
+  if (e instanceof NeedLoginError) {
+    const page = e.page;
+    attempt = !ctx.session.hasState() || !page
+      ? async () => { await login(ctx.session, { timeoutMs, onWaiting: ctx.log }); return true; }
+      : () => loginAt(ctx.session, page, { timeoutMs, onWaiting: ctx.log });
+  } else if (e instanceof FduError && e.code === 'NEED_LOGIN' && e.relogin) {
+    const target = findOp(e.relogin.op);
+    if (target) attempt = async () => { ctx.log(`需要登录（${target.name}），已打开浏览器……`); await target.run(ctx, e.relogin!.args ?? {}); return true; };
+  }
+  if (!attempt) return Promise.resolve(false);
+  const running = RELOGIN_LOCKS.get(ctx.session);
+  if (running) return running;
+  const p = attempt().catch(() => false).finally(() => RELOGIN_LOCKS.delete(ctx.session));
+  RELOGIN_LOCKS.set(ctx.session, p);
+  return p;
 }

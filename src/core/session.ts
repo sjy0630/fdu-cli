@@ -80,7 +80,7 @@ export class Session {
     // 公开接口的请求也会建立请求上下文，所以不能拿「有上下文」当作「登录过」
     if (!this.hasState() && !this.fromBrowser) throw new NeedLoginError(platform);
     const res = await this.raw(url, init);
-    if (isUisLoginUrl(res.url)) throw new NeedLoginError(platform);
+    if (isUisLoginUrl(res.url)) throw new NeedLoginError(platform, undefined, { url });
     return res;
   }
 
@@ -128,7 +128,7 @@ export class Session {
         if (page.isClosed()) throw new FduError('NEED_LOGIN', '浏览器窗口被关闭了，没有完成登录。', '重新运行 `fdu login`。');
         if (isUisLoginUrl(page.url())) {
           onUisSince ||= Date.now();
-          if (opts.headless && Date.now() - onUisSince > (opts.stuckOnUisMs ?? 6000)) throw new NeedLoginError(opts.platform ?? 'elearning');
+          if (opts.headless && Date.now() - onUisSince > (opts.stuckOnUisMs ?? 6000)) throw new NeedLoginError(opts.platform ?? 'elearning', undefined, { url });
           continue;
         }
         onUisSince = 0;

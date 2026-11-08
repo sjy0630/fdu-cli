@@ -85,7 +85,7 @@ export async function readCardRecords(reader: CampusReader, range: { from: strin
     csrf = parseCsrf(index.text);
   }
   if (!csrf) {
-    if (/uis\.fudan|id\.fudan|统一身份认证/.test(index.url + index.text.slice(0, 2000))) throw new NeedLoginError('jwfw');
+    if (/uis\.fudan|id\.fudan|统一身份认证/.test(index.url + index.text.slice(0, 2000))) throw new NeedLoginError('jwfw', undefined, { url: CONSUME_INDEX });
     throw new FduError('FORMAT_CHANGED', '没有在校园卡消费查询页上找到查询入口，学校页面可能更新了。');
   }
   const maxPages = opts.maxPages ?? 30;

@@ -3,7 +3,7 @@ import { Session } from './core/session';
 import { Store } from './core/store';
 import { Cache } from './core/cache';
 import { serveMcp } from './mcp';
-import { findOp, OPS, type Ctx } from './ops';
+import { autoLogin, findOp, OPS, type Ctx } from './ops';
 import { camel, describeOp, exitCode, runOp, type Failure } from './run';
 import { helpGroup, helpOp, helpOverview } from './help';
 import { groupOf } from './groups';
@@ -115,6 +115,7 @@ async function main(argv: string[]): Promise<number> {
     log: (m) => process.stderr.write(`${m}\n`),
     prompt: process.stdin.isTTY ? prompt : undefined,
     cache: new Cache(store),
+    relogin: (e) => autoLogin(ctx, e),
   };
   try {
     const result = await runOp(op, ctx, input, { cachedOnly: flags.cached === true });

@@ -56,10 +56,12 @@ fdu week --date 2026-11-16
 |---|---|---|---|
 | `--webvpn` | boolean |  | 顺便建立 WebVPN 会话（校外访问树洞需要） |
 | `--force` | boolean |  | 丢弃已有登录状态，重新登录 |
+| `--url` | string |  | 打开这个页面完成登录或二次验证（如某些页面要求微信扫码），回到这个页面后窗口自动关闭 |
 
 ```bash
 fdu login
 fdu login --webvpn
+fdu login --url https://my.fudan.edu.cn/simple_list/stqk
 ```
 
 ### `fdu auth status`
@@ -537,12 +539,6 @@ fdu venue free --venue 正大 --date 2026-11-10 --days 3
 ## 食堂
 
 各食堂现在的就餐人数
-
-### `fdu canteen login`
-
-食堂人数页面要求二次验证（微信扫码）：打开浏览器，按页面提示完成验证，看到食堂人数或开放时段说明后窗口自动关闭。
-
-登录：不用 · 登录 / 退出 · 仅命令行
 
 ### `fdu canteen crowd`
 

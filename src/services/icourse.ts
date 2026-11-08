@@ -82,7 +82,7 @@ export class IcourseClient {
         return onIcourse && !x.pathname.includes('/casapi/');
       } catch { return false; }
     });
-    if (!(await this.whoami())) throw new FduError('NEED_LOGIN', '没能登录 iCourse。', '先运行 `fdu login`（校外再加 --webvpn），然后重试。');
+    if (!(await this.whoami())) throw new FduError('NEED_LOGIN', '没能登录 iCourse。', '先运行 `fdu login`（校外再加 --webvpn），然后重试。', { op: 'auth.login', args: { webvpn: true } });
     this.loggedIn = true;
   }
 

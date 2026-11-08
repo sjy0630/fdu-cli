@@ -33,10 +33,12 @@ export function parseCanteen(html: string): CanteenCrowd {
   const scripts = [...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/gi)].map((m) => m[1]);
   for (const script of scripts) {
     const list = arrays(script);
+    // 食堂名是中文，人数和容量是非负整数，三个数组一样长（别的脚本里的数组对不上）
+    const count = (x: unknown) => { const n = num(x); return n !== null && Number.isInteger(n) && n >= 0; };
     const isTriple = (i: number) => {
-      const [names, cur] = list.slice(i, i + 3);
-      return i + 2 < list.length && names.length > 0 && names.every((x) => typeof x === 'string' && Number.isNaN(Number(x)))
-        && cur.length === names.length && cur.every((x) => num(x) !== null);
+      const [names, cur, max] = list.slice(i, i + 3);
+      return i + 2 < list.length && names.length > 0 && names.every((x) => typeof x === 'string' && /[\u4e00-\u9fff]/.test(x))
+        && cur.length === names.length && max.length === names.length && cur.every(count) && max.every((x) => x === '' || count(x));
     };
     // 数据数组前面可能还有别的数组：从第一组能对上的位置开始，按三个一组往后读
     const first = list.findIndex((_, i) => isTriple(i));
@@ -61,16 +63,27 @@ export function parseCanteen(html: string): CanteenCrowd {
 }
 
 export async function readCanteen(reader: CampusReader): Promise<CanteenCrowd> {
-  // 能解析出人数或「不在用餐时段」的说明才算加载好（中间跳转页的脚本里也可能有数组）
-  const ready = (html: string) => { try { parseCanteen(html); return true; } catch { return false; } };
+  // 停在食堂页面上、能解析出人数或「不在用餐时段」的说明才算加载好（中间跳转页、浏览器的错误页都不算）
+  const ready = (html: string, url: string) => {
+    try { if (new URL(url).hostname !== new URL(CANTEEN_URL).hostname) return false; parseCanteen(html); return true; } catch { return false; }
+  };
   let html = '';
   try {
-    html = (await reader.getText(CANTEEN_URL)).text;
+    const r = await reader.getText(CANTEEN_URL);
+    html = r.text;
+    if (!ready(html, r.url)) html = '';
   } catch (e) {
     // 单点登录的最后一步靠页面脚本，后台请求会停在统一身份认证；交给浏览器走完
     // （统一身份认证真的过期时，浏览器也会停在登录页，照样报需要登录）
     if (!(e instanceof NeedLoginError) || !reader.render) throw e;
   }
-  if (!ready(html) && reader.render) html = await reader.render(CANTEEN_URL, ready);
+  if (!html && reader.render) {
+    let landed = '';
+    html = await reader.render(CANTEEN_URL, (h, u) => { landed = u; return ready(h, u); });
+    // 浏览器没能停在食堂页面（网络不通、被带到别处）：不拿别的页面当数据
+    try { if (new URL(landed).hostname !== new URL(CANTEEN_URL).hostname) throw new Error(); } catch {
+      throw new Error('没能打开食堂人数页面，请检查网络后重试。');
+    }
+  }
   return parseCanteen(html);
 }

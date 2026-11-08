@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { Session } from './core/session';
 import { Store } from './core/store';
 import { Cache } from './core/cache';
-import { FLAGS, OPS, type Ctx, type Op } from './ops';
+import { autoLogin, FLAGS, OPS, type Ctx, type Op } from './ops';
 import { runOp } from './run';
 
 declare const __FDU_VERSION__: string;
@@ -40,7 +40,7 @@ export function buildServer(session: Session, store: Store): McpServer {
       inputSchema: mcpShape(op),
       annotations: { readOnlyHint: op.effect === 'read', destructiveHint: false, openWorldHint: true },
     }, async (args: Record<string, unknown>) => {
-      const ctx: Ctx = { store, session, log: (m) => process.stderr.write(`${m}\n`), cwd: process.cwd(), now: () => Date.now(), cache: new Cache(store) };
+      const ctx: Ctx = { store, session, log: (m) => process.stderr.write(`${m}\n`), cwd: process.cwd(), now: () => Date.now(), cache: new Cache(store), relogin: (e) => autoLogin(ctx, e) };
       const result = await runOp(op, ctx, args ?? {});
       await session.release();
       return {

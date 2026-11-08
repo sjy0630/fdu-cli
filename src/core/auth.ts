@@ -1,5 +1,5 @@
 import { FduError } from './errors';
-import { isPermissionDenied, isUisLoginUrl, NeedLoginError, PLATFORM_URLS, type FudanAuth, type FudanPlatform, type PlatformStatus } from './fudan-auth';
+import { isPermissionDenied, isUisLoginUrl, NeedLoginError, PLATFORM_URLS, type FudanAuth, type FudanPlatform, type LoginPage, type PlatformStatus } from './fudan-auth';
 import type { Session } from './session';
 
 const ELEARNING_SELF = `${PLATFORM_URLS.elearning.base}/api/v1/users/self`;
@@ -101,7 +101,7 @@ export async function ensureWebvpn(session: Session, opts: { headless?: boolean 
     if (await webvpnAlive(session)) return;
   }
   const check = await webvpnCheck(session);
-  throw new FduError('NEED_LOGIN', `没能建立 WebVPN 会话（检查时停在 ${check.detail}）。`, '运行 `fdu login --webvpn`，在浏览器里完成登录；还是不行请把这条信息发给开发者。');
+  throw new FduError('NEED_LOGIN', `没能建立 WebVPN 会话（检查时停在 ${check.detail}）。`, '运行 `fdu login --webvpn`，在浏览器里完成登录；还是不行请把这条信息发给开发者。', { op: 'auth.login', args: { webvpn: true } });
 }
 
 export interface LoginResult { elearning: { id: number; name?: string }; jwfw: PlatformStatus; webvpn?: boolean }
@@ -165,4 +165,25 @@ export async function login(session: Session, opts: { webvpn?: boolean; timeoutM
   }
   await session.save();
   return { elearning: user, jwfw, webvpn };
+}
+
+/**
+ * 打开触发登录的页面，完成统一身份认证登录或二次验证（如微信扫码），回到这个页面就算完成。
+ * 先在无界面浏览器里试一次：只是单点登录要靠页面脚本时不用弹窗；停在统一身份认证时再打开窗口。
+ */
+export async function loginAt(session: Session, target: LoginPage, opts: { timeoutMs?: number; onWaiting?: (msg: string) => void } = {}): Promise<boolean> {
+  const host = new URL(target.url).hostname;
+  const done = target.done ?? ((u: string) => { try { return new URL(u).hostname === host && !isUisLoginUrl(u); } catch { return false; } });
+  // 连续两次（约 1 秒）停在目标页面才算完成，避免跳转途中误判
+  const settled = () => { let n = 0; return (page: { url(): string }) => (done(page.url()) ? ++n >= 2 : (n = 0, false)); };
+  let ok = false;
+  const quiet = settled();
+  await session.withPage(target.url, (page) => (ok = quiet(page)), { headless: true, timeoutMs: 20_000 }).catch(() => undefined);
+  if (!ok) {
+    opts.onWaiting?.(`需要登录或二次验证，已打开浏览器（${host}）：请按页面提示完成，完成后窗口会自动关闭（最长等待 ${Math.round((opts.timeoutMs ?? 180_000) / 1000)} 秒）……`);
+    const visible = settled();
+    await session.withPage(target.url, (page) => (ok = visible(page)), { headless: false, timeoutMs: opts.timeoutMs ?? 180_000 }).catch(() => undefined);
+  }
+  if (ok) await session.save();
+  return ok;
 }

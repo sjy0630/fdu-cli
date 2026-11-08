@@ -25,6 +25,14 @@ export function parseElectricity(body: string): DormElectricity {
   };
 }
 
+/** 单点登录走完、回到 zlapp 自己的页面 */
+const zlappReady = (u: string) => {
+  try {
+    const x = new URL(u);
+    return x.hostname === 'zlapp.fudan.edu.cn' && !x.pathname.includes('/uc/wap/login') && !x.pathname.includes('/sso/');
+  } catch { return false; }
+};
+
 /**
  * 读 zlapp 上的接口（宿舍电量、校车等共用）。
  * 先用后台请求走单点登录；统一身份认证最后一步靠页面脚本跳回，后台请求走不完时，
@@ -42,16 +50,11 @@ export async function readZlapp(reader: CampusReader, url: string, init?: Parame
   };
   let res = await get();
   if (notLoggedIn(res) && reader.render) {
-    await reader.render(ZLAPP_SSO, (_html, u) => {
-      try {
-        const x = new URL(u);
-        return x.hostname === 'zlapp.fudan.edu.cn' && !x.pathname.includes('/uc/wap/login') && !x.pathname.includes('/sso/');
-      } catch { return false; }
-    });
+    await reader.render(ZLAPP_SSO, (_html, u) => zlappReady(u));
     res = await get();
   }
   // 还是被带到它自己的登录页：复旦账号登录过期
-  if (notLoggedIn(res)) throw new NeedLoginError('jwfw');
+  if (notLoggedIn(res)) throw new NeedLoginError('jwfw', undefined, { url: ZLAPP_SSO, done: zlappReady });
   return res.text;
 }
 

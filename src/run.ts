@@ -37,7 +37,14 @@ export async function runOp(op: Op, ctx: Ctx, input: Record<string, unknown>, op
       if (!hit) throw new FduError('NOT_FOUND', useCache ? '本地还没有这个查询的缓存。' : '这个命令的结果不缓存。', '去掉 --cached 联网查询一次。');
       return { ok: true, op: op.name, data: hit.data, cachedAt: hit.at };
     }
-    const data = await op.run(ctx, args);
+    let data: unknown;
+    try {
+      data = await op.run(ctx, args);
+    } catch (e) {
+      // 需要登录：自动弹出浏览器登录（或完成二次验证），成功后重试一次
+      if (op.effect === 'auth' || !ctx.relogin || !(await ctx.relogin(e))) throw e;
+      data = await op.run(ctx, args);
+    }
     if (useCache) { try { ctx.cache!.set(op.name, args, data, ctx.now()); } catch { /* 缓存写不进去不影响结果 */ } }
     return { ok: true, op: op.name, data };
   } catch (e) {

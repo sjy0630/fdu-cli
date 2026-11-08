@@ -8,12 +8,14 @@ import { chromium, request } from "playwright-core";
 
 // src/core/fudan-auth.ts
 var NeedLoginError = class extends Error {
-  constructor(platform, message = "\u590D\u65E6\u8D26\u53F7\u767B\u5F55\u5DF2\u8FC7\u671F\uFF0C\u9700\u8981\u91CD\u65B0\u767B\u5F55") {
+  constructor(platform, message = "\u590D\u65E6\u8D26\u53F7\u767B\u5F55\u5DF2\u8FC7\u671F\uFF0C\u9700\u8981\u91CD\u65B0\u767B\u5F55", page) {
     super(message);
     this.platform = platform;
+    this.page = page;
     this.name = "NeedLoginError";
   }
   platform;
+  page;
 };
 var PLATFORM_URLS = {
   elearning: { base: "https://elearning.fudan.edu.cn", entry: "https://elearning.fudan.edu.cn/" },
@@ -42,21 +44,25 @@ function isUisLoginUrl(url) {
 
 // src/core/errors.ts
 var FduError = class extends Error {
-  constructor(code, message, hint) {
+  constructor(code, message, hint, relogin) {
     super(message);
     this.code = code;
     this.hint = hint;
+    this.relogin = relogin;
     this.name = "FduError";
   }
   code;
   hint;
+  relogin;
 };
 function redact(s) {
   return s.replace(/([\w-]*(?:token|csrf|session|cookie|ticket|auth|key|sid)[\w-]*)=([^;\s"',&]+)/gi, "$1=***").replace(/[A-Za-z0-9%+/_-]{32,}={0,2}/g, "***");
 }
 function toFduError(e) {
   if (e instanceof FduError) return e;
-  if (e instanceof NeedLoginError) return new FduError("NEED_LOGIN", "\u590D\u65E6\u8D26\u53F7\u6CA1\u6709\u767B\u5F55\u6216\u767B\u5F55\u5DF2\u8FC7\u671F\u3002", "\u8FD0\u884C `fdu login`\uFF0C\u5728\u5F39\u51FA\u7684\u6D4F\u89C8\u5668\u91CC\u767B\u5F55\u590D\u65E6\u7EDF\u4E00\u8EAB\u4EFD\u8BA4\u8BC1\u3002");
+  if (e instanceof NeedLoginError) {
+    return e.page ? new FduError("NEED_LOGIN", "\u9700\u8981\u767B\u5F55\u590D\u65E6\u7EDF\u4E00\u8EAB\u4EFD\u8BA4\u8BC1\uFF0C\u6216\u8005\u8FD9\u4E2A\u9875\u9762\u8981\u6C42\u4E8C\u6B21\u9A8C\u8BC1\uFF08\u5982\u5FAE\u4FE1\u626B\u7801\uFF09\u3002", `\u8FD0\u884C \`fdu login --url ${e.page.url}\`\uFF0C\u5728\u6253\u5F00\u7684\u6D4F\u89C8\u5668\u91CC\u6309\u63D0\u793A\u5B8C\u6210\uFF0C\u7A97\u53E3\u4F1A\u81EA\u52A8\u5173\u95ED\u3002`) : new FduError("NEED_LOGIN", "\u590D\u65E6\u8D26\u53F7\u6CA1\u6709\u767B\u5F55\u6216\u767B\u5F55\u5DF2\u8FC7\u671F\u3002", "\u8FD0\u884C `fdu login`\uFF0C\u5728\u5F39\u51FA\u7684\u6D4F\u89C8\u5668\u91CC\u767B\u5F55\u590D\u65E6\u7EDF\u4E00\u8EAB\u4EFD\u8BA4\u8BC1\u3002");
+  }
   const err = e;
   const message = redact(String(err?.message ?? e).replace(/\u001b\[[0-9;]*m/g, "").split(/\nCall log:|\n/)[0].replace(/^apiRequestContext\.\w+:\s*/, ""));
   if (err?.name === "TreeholeLoginError") return new FduError("NEED_HOLE_LOGIN", "\u9700\u8981\u767B\u5F55\u6811\u6D1E\u8D26\u53F7\u3002", "\u8FD0\u884C `fdu hole login --email \u5B66\u53F7@m.fudan.edu.cn`\uFF08\u5BC6\u7801\u53EA\u7528\u6765\u6362\u53D6\u4EE4\u724C\uFF0C\u4E0D\u4FDD\u5B58\uFF09\u3002");
@@ -129,7 +135,7 @@ var Session = class {
   async fetch(platform, url, init = {}) {
     if (!this.hasState() && !this.fromBrowser) throw new NeedLoginError(platform);
     const res = await this.raw(url, init);
-    if (isUisLoginUrl(res.url)) throw new NeedLoginError(platform);
+    if (isUisLoginUrl(res.url)) throw new NeedLoginError(platform, void 0, { url });
     return res;
   }
   /** 找浏览器：FDU_BROWSER 指定的路径 → 本机 Chrome → Edge → Playwright 自带的 Chromium */
@@ -185,7 +191,7 @@ var Session = class {
         if (page.isClosed()) throw new FduError("NEED_LOGIN", "\u6D4F\u89C8\u5668\u7A97\u53E3\u88AB\u5173\u95ED\u4E86\uFF0C\u6CA1\u6709\u5B8C\u6210\u767B\u5F55\u3002", "\u91CD\u65B0\u8FD0\u884C `fdu login`\u3002");
         if (isUisLoginUrl(page.url())) {
           onUisSince ||= Date.now();
-          if (opts.headless && Date.now() - onUisSince > (opts.stuckOnUisMs ?? 6e3)) throw new NeedLoginError(opts.platform ?? "elearning");
+          if (opts.headless && Date.now() - onUisSince > (opts.stuckOnUisMs ?? 6e3)) throw new NeedLoginError(opts.platform ?? "elearning", void 0, { url });
           continue;
         }
         onUisSince = 0;
@@ -560,7 +566,7 @@ async function ensureWebvpn(session, opts = {}) {
     if (await webvpnAlive(session)) return;
   }
   const check = await webvpnCheck(session);
-  throw new FduError("NEED_LOGIN", `\u6CA1\u80FD\u5EFA\u7ACB WebVPN \u4F1A\u8BDD\uFF08\u68C0\u67E5\u65F6\u505C\u5728 ${check.detail}\uFF09\u3002`, "\u8FD0\u884C `fdu login --webvpn`\uFF0C\u5728\u6D4F\u89C8\u5668\u91CC\u5B8C\u6210\u767B\u5F55\uFF1B\u8FD8\u662F\u4E0D\u884C\u8BF7\u628A\u8FD9\u6761\u4FE1\u606F\u53D1\u7ED9\u5F00\u53D1\u8005\u3002");
+  throw new FduError("NEED_LOGIN", `\u6CA1\u80FD\u5EFA\u7ACB WebVPN \u4F1A\u8BDD\uFF08\u68C0\u67E5\u65F6\u505C\u5728 ${check.detail}\uFF09\u3002`, "\u8FD0\u884C `fdu login --webvpn`\uFF0C\u5728\u6D4F\u89C8\u5668\u91CC\u5B8C\u6210\u767B\u5F55\uFF1B\u8FD8\u662F\u4E0D\u884C\u8BF7\u628A\u8FD9\u6761\u4FE1\u606F\u53D1\u7ED9\u5F00\u53D1\u8005\u3002", { op: "auth.login", args: { webvpn: true } });
 }
 async function login(session, opts = {}) {
   const existing = await elearningUser(session);
@@ -613,6 +619,30 @@ async function login(session, opts = {}) {
   }
   await session.save();
   return { elearning: user, jwfw, webvpn };
+}
+async function loginAt(session, target, opts = {}) {
+  const host = new URL(target.url).hostname;
+  const done = target.done ?? ((u) => {
+    try {
+      return new URL(u).hostname === host && !isUisLoginUrl(u);
+    } catch {
+      return false;
+    }
+  });
+  const settled = () => {
+    let n = 0;
+    return (page) => done(page.url()) ? ++n >= 2 : (n = 0, false);
+  };
+  let ok = false;
+  const quiet = settled();
+  await session.withPage(target.url, (page) => ok = quiet(page), { headless: true, timeoutMs: 2e4 }).catch(() => void 0);
+  if (!ok) {
+    opts.onWaiting?.(`\u9700\u8981\u767B\u5F55\u6216\u4E8C\u6B21\u9A8C\u8BC1\uFF0C\u5DF2\u6253\u5F00\u6D4F\u89C8\u5668\uFF08${host}\uFF09\uFF1A\u8BF7\u6309\u9875\u9762\u63D0\u793A\u5B8C\u6210\uFF0C\u5B8C\u6210\u540E\u7A97\u53E3\u4F1A\u81EA\u52A8\u5173\u95ED\uFF08\u6700\u957F\u7B49\u5F85 ${Math.round((opts.timeoutMs ?? 18e4) / 1e3)} \u79D2\uFF09\u2026\u2026`);
+    const visible = settled();
+    await session.withPage(target.url, (page) => ok = visible(page), { headless: false, timeoutMs: opts.timeoutMs ?? 18e4 }).catch(() => void 0);
+  }
+  if (ok) await session.save();
+  return ok;
 }
 
 // src/services/academic.ts
@@ -976,6 +1006,14 @@ function parseElectricity(body3) {
     updatedAt: typeof d.fj_update_time === "string" ? d.fj_update_time : void 0
   };
 }
+var zlappReady = (u) => {
+  try {
+    const x = new URL(u);
+    return x.hostname === "zlapp.fudan.edu.cn" && !x.pathname.includes("/uc/wap/login") && !x.pathname.includes("/sso/");
+  } catch {
+    return false;
+  }
+};
 async function readZlapp(reader, url, init) {
   const notLoggedIn = (r) => /\/uc\/wap\/login/.test(r.url) || /<html/i.test(r.text.slice(0, 300));
   await reader.getText(ZLAPP_SSO).catch(() => void 0);
@@ -989,17 +1027,10 @@ async function readZlapp(reader, url, init) {
   };
   let res = await get();
   if (notLoggedIn(res) && reader.render) {
-    await reader.render(ZLAPP_SSO, (_html, u) => {
-      try {
-        const x = new URL(u);
-        return x.hostname === "zlapp.fudan.edu.cn" && !x.pathname.includes("/uc/wap/login") && !x.pathname.includes("/sso/");
-      } catch {
-        return false;
-      }
-    });
+    await reader.render(ZLAPP_SSO, (_html, u) => zlappReady(u));
     res = await get();
   }
-  if (notLoggedIn(res)) throw new NeedLoginError("jwfw");
+  if (notLoggedIn(res)) throw new NeedLoginError("jwfw", void 0, { url: ZLAPP_SSO, done: zlappReady });
   return res.text;
 }
 async function readElectricity(reader) {
@@ -1071,9 +1102,13 @@ function parseCanteen(html) {
   const scripts = [...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/gi)].map((m) => m[1]);
   for (const script of scripts) {
     const list2 = arrays(script);
+    const count = (x) => {
+      const n = num(x);
+      return n !== null && Number.isInteger(n) && n >= 0;
+    };
     const isTriple = (i) => {
-      const [names, cur] = list2.slice(i, i + 3);
-      return i + 2 < list2.length && names.length > 0 && names.every((x) => typeof x === "string" && Number.isNaN(Number(x))) && cur.length === names.length && cur.every((x) => num(x) !== null);
+      const [names, cur, max] = list2.slice(i, i + 3);
+      return i + 2 < list2.length && names.length > 0 && names.every((x) => typeof x === "string" && /[\u4e00-\u9fff]/.test(x)) && cur.length === names.length && max.length === names.length && cur.every(count) && max.every((x) => x === "" || count(x));
     };
     const first2 = list2.findIndex((_, i) => isTriple(i));
     if (first2 < 0) continue;
@@ -1095,8 +1130,9 @@ function parseCanteen(html) {
   throw new Error("\u6CA1\u6709\u5728\u98DF\u5802\u60C5\u51B5\u9875\u9762\u4E0A\u627E\u5230\u4EBA\u6570\u6570\u636E\uFF0C\u5B66\u6821\u9875\u9762\u53EF\u80FD\u66F4\u65B0\u4E86\u3002");
 }
 async function readCanteen(reader) {
-  const ready = (html2) => {
+  const ready = (html2, url) => {
     try {
+      if (new URL(url).hostname !== new URL(CANTEEN_URL).hostname) return false;
       parseCanteen(html2);
       return true;
     } catch {
@@ -1105,11 +1141,24 @@ async function readCanteen(reader) {
   };
   let html = "";
   try {
-    html = (await reader.getText(CANTEEN_URL)).text;
+    const r = await reader.getText(CANTEEN_URL);
+    html = r.text;
+    if (!ready(html, r.url)) html = "";
   } catch (e) {
     if (!(e instanceof NeedLoginError) || !reader.render) throw e;
   }
-  if (!ready(html) && reader.render) html = await reader.render(CANTEEN_URL, ready);
+  if (!html && reader.render) {
+    let landed = "";
+    html = await reader.render(CANTEEN_URL, (h, u) => {
+      landed = u;
+      return ready(h, u);
+    });
+    try {
+      if (new URL(landed).hostname !== new URL(CANTEEN_URL).hostname) throw new Error();
+    } catch {
+      throw new Error("\u6CA1\u80FD\u6253\u5F00\u98DF\u5802\u4EBA\u6570\u9875\u9762\uFF0C\u8BF7\u68C0\u67E5\u7F51\u7EDC\u540E\u91CD\u8BD5\u3002");
+    }
+  }
   return parseCanteen(html);
 }
 
@@ -1432,7 +1481,7 @@ async function readSemesters(reader) {
     try {
       return parseSemesterPage(page.text);
     } catch (error) {
-      if (/id\.fudan\.edu\.cn|uis\.fudan\.edu\.cn|authserver|统一身份认证/.test(page.url + page.text.slice(0, 3e3))) throw new NeedLoginError("jwfw");
+      if (/id\.fudan\.edu\.cn|uis\.fudan\.edu\.cn|authserver|统一身份认证/.test(page.url + page.text.slice(0, 3e3))) throw new NeedLoginError("jwfw", void 0, { url: UNDERGRAD_TABLE_URL });
       if (attempt >= 1) throw error;
     }
   }
@@ -1778,7 +1827,7 @@ function libDate(v) {
   return m ? `${m[1]}-${m[2]}-${m[3]}` : void 0;
 }
 function body(r, what) {
-  if (r.status === 401 || r.status === 403) throw new FduError("NEED_LOGIN", "\u56FE\u4E66\u9986\u767B\u5F55\u5DF2\u8FC7\u671F\u3002", "\u8FD0\u884C `fdu library login`\uFF0C\u5728\u6253\u5F00\u7684\u56FE\u4E66\u9986\u9875\u9762\u91CC\u767B\u5F55\u4E00\u6B21\u3002");
+  if (r.status === 401 || r.status === 403) throw new FduError("NEED_LOGIN", "\u56FE\u4E66\u9986\u767B\u5F55\u5DF2\u8FC7\u671F\u3002", "\u8FD0\u884C `fdu library login`\uFF0C\u5728\u6253\u5F00\u7684\u56FE\u4E66\u9986\u9875\u9762\u91CC\u767B\u5F55\u4E00\u6B21\u3002", { op: "library.login" });
   let j;
   try {
     j = JSON.parse(r.text);
@@ -1787,7 +1836,7 @@ function body(r, what) {
   }
   const code = Number(j.code);
   if (code === 401 || code === 403 || /登录|token|过期|未授权/i.test(String(j.msg ?? j.message ?? "")) && code !== 0 && code !== 200) {
-    throw new FduError("NEED_LOGIN", "\u56FE\u4E66\u9986\u767B\u5F55\u5DF2\u8FC7\u671F\u3002", "\u8FD0\u884C `fdu library login`\uFF0C\u5728\u6253\u5F00\u7684\u56FE\u4E66\u9986\u9875\u9762\u91CC\u767B\u5F55\u4E00\u6B21\u3002");
+    throw new FduError("NEED_LOGIN", "\u56FE\u4E66\u9986\u767B\u5F55\u5DF2\u8FC7\u671F\u3002", "\u8FD0\u884C `fdu library login`\uFF0C\u5728\u6253\u5F00\u7684\u56FE\u4E66\u9986\u9875\u9762\u91CC\u767B\u5F55\u4E00\u6B21\u3002", { op: "library.login" });
   }
   if (code !== 0 && code !== 200) throw new FduError("UPSTREAM", `\u56FE\u4E66\u9986\u7CFB\u7EDF\uFF1A${String(j.msg ?? j.message ?? code)}`);
   return j;
@@ -2774,7 +2823,7 @@ var IcourseClient = class _IcourseClient {
         return false;
       }
     });
-    if (!await this.whoami()) throw new FduError("NEED_LOGIN", "\u6CA1\u80FD\u767B\u5F55 iCourse\u3002", "\u5148\u8FD0\u884C `fdu login`\uFF08\u6821\u5916\u518D\u52A0 --webvpn\uFF09\uFF0C\u7136\u540E\u91CD\u8BD5\u3002");
+    if (!await this.whoami()) throw new FduError("NEED_LOGIN", "\u6CA1\u80FD\u767B\u5F55 iCourse\u3002", "\u5148\u8FD0\u884C `fdu login`\uFF08\u6821\u5916\u518D\u52A0 --webvpn\uFF09\uFF0C\u7136\u540E\u91CD\u8BD5\u3002", { op: "auth.login", args: { webvpn: true } });
     this.loggedIn = true;
   }
   async get(path, params) {
@@ -2924,7 +2973,7 @@ async function readCardRecords(reader, range2, opts = {}) {
     csrf = parseCsrf(index.text);
   }
   if (!csrf) {
-    if (/uis\.fudan|id\.fudan|统一身份认证/.test(index.url + index.text.slice(0, 2e3))) throw new NeedLoginError("jwfw");
+    if (/uis\.fudan|id\.fudan|统一身份认证/.test(index.url + index.text.slice(0, 2e3))) throw new NeedLoginError("jwfw", void 0, { url: CONSUME_INDEX });
     throw new FduError("FORMAT_CHANGED", "\u6CA1\u6709\u5728\u6821\u56ED\u5361\u6D88\u8D39\u67E5\u8BE2\u9875\u4E0A\u627E\u5230\u67E5\u8BE2\u5165\u53E3\uFF0C\u5B66\u6821\u9875\u9762\u53EF\u80FD\u66F4\u65B0\u4E86\u3002");
   }
   const maxPages = opts.maxPages ?? 30;
@@ -3122,7 +3171,7 @@ function parseDayPage(html) {
   });
   periods.sort((a, b) => a.no - b.no);
   if (!periods.length) {
-    if (/统一身份认证|authCenter|idp\/authn/i.test(html)) throw new FduError("NEED_LOGIN", "\u7A7A\u6559\u5BA4\u7CFB\u7EDF\u9700\u8981\u767B\u5F55\u3002", "\u8FD0\u884C `fdu rooms login`\uFF0C\u5728\u6253\u5F00\u7684\u7A97\u53E3\u91CC\u767B\u5F55\u4E00\u6B21\u3002");
+    if (/统一身份认证|authCenter|idp\/authn/i.test(html)) throw new FduError("NEED_LOGIN", "\u7A7A\u6559\u5BA4\u7CFB\u7EDF\u9700\u8981\u767B\u5F55\u3002", "\u8FD0\u884C `fdu rooms login`\uFF0C\u5728\u6253\u5F00\u7684\u7A97\u53E3\u91CC\u767B\u5F55\u4E00\u6B21\u3002", { op: "rooms.login" });
     throw new FduError("FORMAT_CHANGED", "\u7A7A\u6559\u5BA4\u9875\u9762\u7684\u683C\u5F0F\u548C\u9884\u671F\u4E0D\u540C\uFF0C\u5B66\u6821\u9875\u9762\u53EF\u80FD\u66F4\u65B0\u4E86\u3002");
   }
   const rooms = [];
@@ -3534,7 +3583,7 @@ async function withLibrary(ctx, work) {
   if (saved?.token) {
     if (saved.expiresAt && Date.parse(saved.expiresAt) < ctx.now()) {
       ctx.store.remove(LIB_TOKEN);
-      throw new FduError("NEED_LOGIN", "\u56FE\u4E66\u9986\u767B\u5F55\u5DF2\u8FC7\u671F\u3002", LIB_LOGIN_HINT);
+      throw new FduError("NEED_LOGIN", "\u56FE\u4E66\u9986\u767B\u5F55\u5DF2\u8FC7\u671F\u3002", LIB_LOGIN_HINT, { op: "library.login" });
     }
     const headers = { access_token: saved.token, Accept: "application/json", Origin: "https://opac.fudan.edu.cn", Referer: OPAC };
     const getJson = async (url) => {
@@ -3547,7 +3596,7 @@ async function withLibrary(ctx, work) {
     } catch (e) {
       if (e instanceof FduError && e.code === "NEED_LOGIN") {
         ctx.store.remove(LIB_TOKEN);
-        throw new FduError("NEED_LOGIN", "\u56FE\u4E66\u9986\u767B\u5F55\u5DF2\u8FC7\u671F\u3002", LIB_LOGIN_HINT);
+        throw new FduError("NEED_LOGIN", "\u56FE\u4E66\u9986\u767B\u5F55\u5DF2\u8FC7\u671F\u3002", LIB_LOGIN_HINT, { op: "library.login" });
       }
       throw e;
     }
@@ -3560,7 +3609,7 @@ async function withLibrary(ctx, work) {
     const token = findLibraryToken(await storageEntries(page));
     if (!token) {
       if (Date.now() - started < 1e4) return false;
-      failure = new FduError("NEED_LOGIN", "\u8FD8\u6CA1\u6709\u767B\u5F55\u56FE\u4E66\u9986\u3002", LIB_LOGIN_HINT);
+      failure = new FduError("NEED_LOGIN", "\u8FD8\u6CA1\u6709\u767B\u5F55\u56FE\u4E66\u9986\u3002", LIB_LOGIN_HINT, { op: "library.login" });
       return true;
     }
     const getJson = (url) => page.evaluate(async ([u, t]) => {
@@ -3584,8 +3633,8 @@ async function roomsDayPage(ctx, building, day) {
   if (!ctx.session.hasState()) throw new NeedLoginError("jwfw");
   await ensureWebvpn(ctx.session);
   const r = await ctx.session.browserFetch(dayPageUrl(building, day), { timeoutMs: 3e4 });
-  if (/\/urp\/|authCenter|\/idp\//.test(r.url)) throw new FduError("NEED_LOGIN", "\u7A7A\u6559\u5BA4\u7CFB\u7EDF\u9700\u8981\u767B\u5F55\u3002", ROOMS_LOGIN_HINT);
-  if (/webvpn\.fudan\.edu\.cn\/login/.test(r.url)) throw new FduError("NEED_LOGIN", "WebVPN \u767B\u5F55\u5DF2\u8FC7\u671F\u3002", "\u8FD0\u884C `fdu login --webvpn`\u3002");
+  if (/\/urp\/|authCenter|\/idp\//.test(r.url)) throw new FduError("NEED_LOGIN", "\u7A7A\u6559\u5BA4\u7CFB\u7EDF\u9700\u8981\u767B\u5F55\u3002", ROOMS_LOGIN_HINT, { op: "rooms.login" });
+  if (/webvpn\.fudan\.edu\.cn\/login/.test(r.url)) throw new FduError("NEED_LOGIN", "WebVPN \u767B\u5F55\u5DF2\u8FC7\u671F\u3002", "\u8FD0\u884C `fdu login --webvpn`\u3002", { op: "auth.login", args: { webvpn: true } });
   return parseDayPage(r.text);
 }
 function buildingList(value, max = 6) {
@@ -3607,7 +3656,6 @@ var needPrompt = (ctx) => {
   if (!ctx.prompt) throw new FduError("BAD_ARGS", "\u8FD9\u4E2A\u64CD\u4F5C\u9700\u8981\u5728\u7EC8\u7AEF\u91CC\u8F93\u5165\u5BC6\u7801\uFF0C\u8BF7\u76F4\u63A5\u5728\u7EC8\u7AEF\u8FD0\u884C\u3002");
   return ctx.prompt;
 };
-var CANTEEN_LOGIN_HINT = "\u8FD0\u884C `fdu canteen login`\uFF0C\u5728\u6253\u5F00\u7684\u6D4F\u89C8\u5668\u91CC\u6309\u63D0\u793A\u7528\u5FAE\u4FE1\u626B\u7801\uFF0C\u770B\u5230\u9875\u9762\u540E\u7A97\u53E3\u4F1A\u81EA\u52A8\u5173\u95ED\u3002\u9A8C\u8BC1\u6709\u6548\u671F\u7531\u5B66\u6821\u51B3\u5B9A\uFF0C\u8FC7\u671F\u540E\u518D\u8FD0\u884C\u4E00\u6B21\u3002";
 var OPS = [
   // ======================= 账号 =======================
   op({
@@ -3615,10 +3663,19 @@ var OPS = [
     summary: "\u767B\u5F55\u590D\u65E6\u7EDF\u4E00\u8EAB\u4EFD\u8BA4\u8BC1\uFF1A\u6253\u5F00\u6D4F\u89C8\u5668\uFF0C\u4F60\u81EA\u5DF1\u8F93\u5165\u8D26\u53F7\u5BC6\u7801\u3001\u5B8C\u6210\u4E8C\u6B21\u9A8C\u8BC1\uFF1B\u4E4B\u540E eLearning\u3001\u6559\u52A1\u3001\u6821\u56ED\u5361\u7B49\u5171\u7528\u8FD9\u4E2A\u767B\u5F55\u3002",
     login: "none",
     effect: "auth",
-    params: { webvpn: flag("\u987A\u4FBF\u5EFA\u7ACB WebVPN \u4F1A\u8BDD\uFF08\u6821\u5916\u8BBF\u95EE\u6811\u6D1E\u9700\u8981\uFF09"), force: flag("\u4E22\u5F03\u5DF2\u6709\u767B\u5F55\u72B6\u6001\uFF0C\u91CD\u65B0\u767B\u5F55") },
-    examples: ["fdu login", "fdu login --webvpn"],
+    params: {
+      webvpn: flag("\u987A\u4FBF\u5EFA\u7ACB WebVPN \u4F1A\u8BDD\uFF08\u6821\u5916\u8BBF\u95EE\u6811\u6D1E\u9700\u8981\uFF09"),
+      force: flag("\u4E22\u5F03\u5DF2\u6709\u767B\u5F55\u72B6\u6001\uFF0C\u91CD\u65B0\u767B\u5F55"),
+      url: z.string().url().optional().describe("\u6253\u5F00\u8FD9\u4E2A\u9875\u9762\u5B8C\u6210\u767B\u5F55\u6216\u4E8C\u6B21\u9A8C\u8BC1\uFF08\u5982\u67D0\u4E9B\u9875\u9762\u8981\u6C42\u5FAE\u4FE1\u626B\u7801\uFF09\uFF0C\u56DE\u5230\u8FD9\u4E2A\u9875\u9762\u540E\u7A97\u53E3\u81EA\u52A8\u5173\u95ED")
+    },
+    examples: ["fdu login", "fdu login --webvpn", "fdu login --url https://my.fudan.edu.cn/simple_list/stqk"],
     async run(ctx, a) {
       if (a.force) ctx.session.clear();
+      if (a.url) {
+        if (!ctx.session.hasState()) await login(ctx.session, { onWaiting: ctx.log });
+        if (!await loginAt(ctx.session, { url: a.url }, { onWaiting: ctx.log })) throw new FduError("NEED_LOGIN", "\u6CA1\u6709\u5B8C\u6210\u767B\u5F55\u6216\u4E8C\u6B21\u9A8C\u8BC1\u3002", `\u91CD\u65B0\u8FD0\u884C \`fdu login --url ${a.url}\`\uFF0C\u6309\u9875\u9762\u63D0\u793A\u5B8C\u6210\u540E\u7B49\u7A97\u53E3\u81EA\u52A8\u5173\u95ED\u3002`);
+        return { loggedIn: true, url: a.url, stateFile: ctx.store.path("state.json") };
+      }
       const r = await login(ctx.session, { webvpn: a.webvpn, onWaiting: ctx.log });
       return { loggedIn: true, user: r.elearning.name, jwfw: r.jwfw, webvpn: r.webvpn, stateFile: ctx.store.path("state.json") };
     }
@@ -4226,31 +4283,6 @@ var OPS = [
     }
   }),
   op({
-    name: "canteen.login",
-    summary: "\u98DF\u5802\u4EBA\u6570\u9875\u9762\u8981\u6C42\u4E8C\u6B21\u9A8C\u8BC1\uFF08\u5FAE\u4FE1\u626B\u7801\uFF09\uFF1A\u6253\u5F00\u6D4F\u89C8\u5668\uFF0C\u6309\u9875\u9762\u63D0\u793A\u5B8C\u6210\u9A8C\u8BC1\uFF0C\u770B\u5230\u98DF\u5802\u4EBA\u6570\u6216\u5F00\u653E\u65F6\u6BB5\u8BF4\u660E\u540E\u7A97\u53E3\u81EA\u52A8\u5173\u95ED\u3002",
-    login: "none",
-    effect: "auth",
-    mcp: false,
-    params: {},
-    async run(ctx) {
-      if (!ctx.session.hasState()) throw new NeedLoginError("jwfw");
-      ctx.log("\u5DF2\u6253\u5F00\u98DF\u5802\u4EBA\u6570\u9875\u9762\uFF1A\u6309\u63D0\u793A\u7528\u5FAE\u4FE1\u626B\u7801\u5B8C\u6210\u4E8C\u6B21\u9A8C\u8BC1\uFF1B\u770B\u5230\u9875\u9762\u5185\u5BB9\u540E\u7A97\u53E3\u4F1A\u81EA\u52A8\u5173\u95ED\u3002");
-      const loaded = (html) => {
-        try {
-          parseCanteen(html);
-          return true;
-        } catch {
-          return false;
-        }
-      };
-      let ok = false;
-      await ctx.session.withPage(CANTEEN_URL, (_page, html) => ok = loaded(html), { headless: false, timeoutMs: 3e5 });
-      if (!ok) throw new FduError("NEED_LOGIN", "\u6CA1\u6709\u5B8C\u6210\u4E8C\u6B21\u9A8C\u8BC1\u3002", CANTEEN_LOGIN_HINT);
-      await ctx.session.save();
-      return { verified: true };
-    }
-  }),
-  op({
     name: "canteen.crowd",
     summary: "\u5404\u98DF\u5802\u73B0\u5728\u7684\u5C31\u9910\u4EBA\u6570\u548C\u5BB9\u91CF\uFF08ratio = \u4EBA\u6570 / \u5BB9\u91CF\uFF09\u3002\u4E0D\u5728\u7528\u9910\u65F6\u6BB5\u65F6 open \u4E3A false\uFF0C\u5E76\u9644\u4E0A\u5B66\u6821\u9875\u9762\u7684\u8BF4\u660E\u3002",
     login: "uis",
@@ -4258,15 +4290,7 @@ var OPS = [
     params: { campus: z.string().optional().describe("\u53EA\u770B\u67D0\u4E2A\u6821\u533A\uFF1A\u90AF\u90F8\u3001\u67AB\u6797\u3001\u6C5F\u6E7E\u3001\u5F20\u6C5F") },
     examples: ["fdu canteen crowd", "fdu canteen crowd --campus \u90AF\u90F8"],
     async run(ctx, a) {
-      let r;
-      try {
-        r = await readCanteen(ctx.session.reader("jwfw"));
-      } catch (e) {
-        if (e instanceof NeedLoginError && await platformStatus(ctx.session, "jwfw") === "ok") {
-          throw new FduError("NEED_LOGIN", "\u98DF\u5802\u4EBA\u6570\u9875\u9762\u8981\u6C42\u4E8C\u6B21\u9A8C\u8BC1\uFF08\u5FAE\u4FE1\u626B\u7801\uFF09\u3002", CANTEEN_LOGIN_HINT);
-        }
-        throw e;
-      }
+      const r = await readCanteen(ctx.session.reader("jwfw"));
       const campuses = a.campus ? r.campuses.filter((c) => c.campus.includes(a.campus.replace(/校区$/, ""))) : r.campuses;
       return { ...r, campuses, at: new Date(ctx.now()).toISOString() };
     }
@@ -4665,6 +4689,32 @@ var OPS = [
 function findOp(name) {
   return OPS.find((o) => o.name === name);
 }
+var RELOGIN_LOCKS = /* @__PURE__ */ new WeakMap();
+function autoLogin(ctx, e) {
+  if (process.env.FDU_AUTO_LOGIN === "0") return Promise.resolve(false);
+  const timeoutMs = (Number(process.env.FDU_LOGIN_WAIT) || 180) * 1e3;
+  let attempt;
+  if (e instanceof NeedLoginError) {
+    const page = e.page;
+    attempt = !ctx.session.hasState() || !page ? async () => {
+      await login(ctx.session, { timeoutMs, onWaiting: ctx.log });
+      return true;
+    } : () => loginAt(ctx.session, page, { timeoutMs, onWaiting: ctx.log });
+  } else if (e instanceof FduError && e.code === "NEED_LOGIN" && e.relogin) {
+    const target = findOp(e.relogin.op);
+    if (target) attempt = async () => {
+      ctx.log(`\u9700\u8981\u767B\u5F55\uFF08${target.name}\uFF09\uFF0C\u5DF2\u6253\u5F00\u6D4F\u89C8\u5668\u2026\u2026`);
+      await target.run(ctx, e.relogin.args ?? {});
+      return true;
+    };
+  }
+  if (!attempt) return Promise.resolve(false);
+  const running = RELOGIN_LOCKS.get(ctx.session);
+  if (running) return running;
+  const p = attempt().catch(() => false).finally(() => RELOGIN_LOCKS.delete(ctx.session));
+  RELOGIN_LOCKS.set(ctx.session, p);
+  return p;
+}
 
 // src/run.ts
 import { z as z2 } from "zod";
@@ -4686,7 +4736,13 @@ async function runOp(op2, ctx, input, opts = {}) {
       if (!hit) throw new FduError("NOT_FOUND", useCache ? "\u672C\u5730\u8FD8\u6CA1\u6709\u8FD9\u4E2A\u67E5\u8BE2\u7684\u7F13\u5B58\u3002" : "\u8FD9\u4E2A\u547D\u4EE4\u7684\u7ED3\u679C\u4E0D\u7F13\u5B58\u3002", "\u53BB\u6389 --cached \u8054\u7F51\u67E5\u8BE2\u4E00\u6B21\u3002");
       return { ok: true, op: op2.name, data: hit.data, cachedAt: hit.at };
     }
-    const data = await op2.run(ctx, args);
+    let data;
+    try {
+      data = await op2.run(ctx, args);
+    } catch (e) {
+      if (op2.effect === "auth" || !ctx.relogin || !await ctx.relogin(e)) throw e;
+      data = await op2.run(ctx, args);
+    }
     if (useCache) {
       try {
         ctx.cache.set(op2.name, args, data, ctx.now());
@@ -4763,7 +4819,7 @@ function buildServer(session, store) {
       annotations: { readOnlyHint: op2.effect === "read", destructiveHint: false, openWorldHint: true }
     }, async (args) => {
       const ctx = { store, session, log: (m) => process.stderr.write(`${m}
-`), cwd: process.cwd(), now: () => Date.now(), cache: new Cache(store) };
+`), cwd: process.cwd(), now: () => Date.now(), cache: new Cache(store), relogin: (e) => autoLogin(ctx, e) };
       const result = await runOp(op2, ctx, args ?? {});
       await session.release();
       return {
@@ -5033,7 +5089,8 @@ async function main(argv) {
     log: (m) => process.stderr.write(`${m}
 `),
     prompt: process.stdin.isTTY ? prompt : void 0,
-    cache: new Cache(store)
+    cache: new Cache(store),
+    relogin: (e) => autoLogin(ctx, e)
   };
   try {
     const result = await runOp(op2, ctx, input, { cachedOnly: flags.cached === true });

@@ -41,12 +41,12 @@ export function libDate(v: unknown): string | undefined {
 }
 
 function body(r: { status: number; text: string }, what: string): { code?: unknown; msg?: unknown; message?: unknown; data?: unknown } {
-  if (r.status === 401 || r.status === 403) throw new FduError('NEED_LOGIN', '图书馆登录已过期。', '运行 `fdu library login`，在打开的图书馆页面里登录一次。');
+  if (r.status === 401 || r.status === 403) throw new FduError('NEED_LOGIN', '图书馆登录已过期。', '运行 `fdu library login`，在打开的图书馆页面里登录一次。', { op: 'library.login' });
   let j: { code?: unknown; msg?: unknown; message?: unknown; data?: unknown };
   try { j = JSON.parse(r.text); } catch { throw new FduError('UPSTREAM', `图书馆系统返回的不是数据（${what}，${r.status}）。`); }
   const code = Number(j.code);
   if (code === 401 || code === 403 || /登录|token|过期|未授权/i.test(String(j.msg ?? j.message ?? '')) && code !== 0 && code !== 200) {
-    throw new FduError('NEED_LOGIN', '图书馆登录已过期。', '运行 `fdu library login`，在打开的图书馆页面里登录一次。');
+    throw new FduError('NEED_LOGIN', '图书馆登录已过期。', '运行 `fdu library login`，在打开的图书馆页面里登录一次。', { op: 'library.login' });
   }
   if (code !== 0 && code !== 200) throw new FduError('UPSTREAM', `图书馆系统：${String(j.msg ?? j.message ?? code)}`);
   return j;

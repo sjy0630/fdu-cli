@@ -21,8 +21,15 @@ export interface FudanAuth {
   requestLogin(): Promise<void>;
 }
 
+/** 触发登录的页面：自动登录时在浏览器里打开它，登录或二次验证后回到这个页面就算完成 */
+export interface LoginPage {
+  url: string;
+  /** 浏览器停在哪个地址时算完成（默认：回到 url 的主机且不在统一身份认证） */
+  done?: (url: string) => boolean;
+}
+
 export class NeedLoginError extends Error {
-  constructor(public readonly platform: FudanPlatform, message = '复旦账号登录已过期，需要重新登录') {
+  constructor(public readonly platform: FudanPlatform, message = '复旦账号登录已过期，需要重新登录', public readonly page?: LoginPage) {
     super(message);
     this.name = 'NeedLoginError';
   }

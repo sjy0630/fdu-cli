@@ -74,7 +74,7 @@ export function parseDayPage(html: string): DayPage {
   });
   periods.sort((a, b) => a.no - b.no);
   if (!periods.length) {
-    if (/统一身份认证|authCenter|idp\/authn/i.test(html)) throw new FduError('NEED_LOGIN', '空教室系统需要登录。', '运行 `fdu rooms login`，在打开的窗口里登录一次。');
+    if (/统一身份认证|authCenter|idp\/authn/i.test(html)) throw new FduError('NEED_LOGIN', '空教室系统需要登录。', '运行 `fdu rooms login`，在打开的窗口里登录一次。', { op: 'rooms.login' });
     throw new FduError('FORMAT_CHANGED', '空教室页面的格式和预期不同，学校页面可能更新了。');
   }
   const rooms: RoomDay[] = [];

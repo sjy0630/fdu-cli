@@ -30,13 +30,24 @@ describe('食堂人数', () => {
     expect(r).toEqual({ open: false, note: '本功能仅在用餐时段开放 6:30-9:30 10:30-13:30 16:30-19:30', campuses: [] });
   });
 
+  it('别的页面里的数组（如浏览器错误页的 WIDTH）不当成食堂数据', () => {
+    expect(() => parseCanteen(page("var a = ['WIDTH']; var b = [0]; var c = [0];"))).toThrow('页面可能更新了');
+  });
+
+  it('浏览器没能停在食堂页面时报错，不返回别的页面的内容', async () => {
+    await expect(readCanteen({
+      getText: async () => { throw new NeedLoginError('jwfw'); },
+      render: async (_url, ready) => { const html = '<html><body>仅供测试</body></html>'; ready(html, 'chrome-error://chromewebdata/'); return html; },
+    })).rejects.toThrow('没能打开食堂人数页面');
+  });
+
   it('页面改版时报错而不是返回空数据', () => {
     expect(() => parseCanteen('<html><body>维护中</body></html>')).toThrow('页面可能更新了');
   });
 
   it('后台请求被带到统一身份认证时，交给浏览器走完单点登录；浏览器也登不上时报需要登录', async () => {
     const toUis = async (): Promise<never> => { throw new NeedLoginError('jwfw'); };
-    const r = await readCanteen({ getText: toUis, render: async () => page("['江湾食堂'];['20'];['80']") });
+    const r = await readCanteen({ getText: toUis, render: async (url, ready) => { const html = page("['江湾食堂'];['20'];['80']"); ready(html, url); return html; } });
     expect(r.campuses[0]).toMatchObject({ campus: '邯郸', canteens: [{ name: '江湾食堂', current: 20 }] });
     await expect(readCanteen({ getText: toUis, render: async () => { throw new NeedLoginError('jwfw'); } })).rejects.toBeInstanceOf(NeedLoginError);
     await expect(readCanteen({ getText: toUis })).rejects.toBeInstanceOf(NeedLoginError);

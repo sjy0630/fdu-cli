@@ -13,8 +13,11 @@ export type ErrorCode =
   | 'UPSTREAM' // 学校系统出错、超时、断网
   | 'INTERNAL';
 
+/** 需要登录时，自动登录要运行的登录命令（如教室系统、图书馆这些单独登录的系统） */
+export interface Relogin { op: string; args?: Record<string, unknown> }
+
 export class FduError extends Error {
-  constructor(public readonly code: ErrorCode, message: string, public readonly hint?: string) {
+  constructor(public readonly code: ErrorCode, message: string, public readonly hint?: string, public readonly relogin?: Relogin) {
     super(message);
     this.name = 'FduError';
   }
@@ -30,7 +33,11 @@ export function redact(s: string): string {
 /** 把各模块抛出的错误统一成 FduError */
 export function toFduError(e: unknown): FduError {
   if (e instanceof FduError) return e;
-  if (e instanceof NeedLoginError) return new FduError('NEED_LOGIN', '复旦账号没有登录或登录已过期。', '运行 `fdu login`，在弹出的浏览器里登录复旦统一身份认证。');
+  if (e instanceof NeedLoginError) {
+    return e.page
+      ? new FduError('NEED_LOGIN', '需要登录复旦统一身份认证，或者这个页面要求二次验证（如微信扫码）。', `运行 \`fdu login --url ${e.page.url}\`，在打开的浏览器里按提示完成，窗口会自动关闭。`)
+      : new FduError('NEED_LOGIN', '复旦账号没有登录或登录已过期。', '运行 `fdu login`，在弹出的浏览器里登录复旦统一身份认证。');
+  }
   const err = e as { name?: string; message?: string; status?: number };
   // Playwright 的报错后面带一大段调用日志和终端颜色，只留第一行
   const message = redact(String(err?.message ?? e).replace(/\u001b\[[0-9;]*m/g, '').split(/\nCall log:|\n/)[0].replace(/^apiRequestContext\.\w+:\s*/, ''));

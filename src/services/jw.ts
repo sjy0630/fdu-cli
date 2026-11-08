@@ -20,7 +20,7 @@ export async function readSemesters(reader: CampusReader): Promise<{ semesters: 
     try {
       return parseSemesterPage(page.text);
     } catch (error) {
-      if (/id\.fudan\.edu\.cn|uis\.fudan\.edu\.cn|authserver|统一身份认证/.test(page.url + page.text.slice(0, 3000))) throw new NeedLoginError('jwfw');
+      if (/id\.fudan\.edu\.cn|uis\.fudan\.edu\.cn|authserver|统一身份认证/.test(page.url + page.text.slice(0, 3000))) throw new NeedLoginError('jwfw', undefined, { url: UNDERGRAD_TABLE_URL });
       if (attempt >= 1) throw error;
     }
   }
