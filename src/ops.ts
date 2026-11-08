@@ -10,7 +10,7 @@ import { readProgramCompletion, readSelectedCourses } from './services/academic'
 import { readCardBalance, readLibrary } from './services/campus-life';
 import { readElectricity } from './services/dorm';
 import { filterBus, readBus } from './services/bus';
-import { readCanteen } from './services/canteen';
+import { CANTEEN_URL, parseCanteen, readCanteen } from './services/canteen';
 import { CanvasClient, isAssignmentDone, type CanvasCourse } from './services/elearning';
 import { readGpaRank, readGrades, readStudentId } from './services/grades';
 import { readExams, readLessons, readSemesters, readSyllabus, readTimetable } from './services/jw';
@@ -340,6 +340,8 @@ const needPrompt = (ctx: Ctx) => {
   if (!ctx.prompt) throw new FduError('BAD_ARGS', '这个操作需要在终端里输入密码，请直接在终端运行。');
   return ctx.prompt;
 };
+
+const CANTEEN_LOGIN_HINT = '运行 `fdu canteen login`，在打开的浏览器里按提示用微信扫码，看到页面后窗口会自动关闭。验证有效期由学校决定，过期后再运行一次。';
 
 export const OPS: Op[] = [
   // ======================= 账号 =======================
@@ -800,12 +802,35 @@ export const OPS: Op[] = [
     },
   }),
   op({
+    name: 'canteen.login', summary: '食堂人数页面要求二次验证（微信扫码）：打开浏览器，按页面提示完成验证，看到食堂人数或开放时段说明后窗口自动关闭。',
+    login: 'none', effect: 'auth', mcp: false, params: {},
+    async run(ctx) {
+      if (!ctx.session.hasState()) throw new NeedLoginError('jwfw');
+      ctx.log('已打开食堂人数页面：按提示用微信扫码完成二次验证；看到页面内容后窗口会自动关闭。');
+      const loaded = (html: string) => { try { parseCanteen(html); return true; } catch { return false; } };
+      let ok = false;
+      await ctx.session.withPage(CANTEEN_URL, (_page, html) => (ok = loaded(html)), { headless: false, timeoutMs: 300_000 });
+      if (!ok) throw new FduError('NEED_LOGIN', '没有完成二次验证。', CANTEEN_LOGIN_HINT);
+      await ctx.session.save();
+      return { verified: true };
+    },
+  }),
+  op({
     name: 'canteen.crowd', summary: '各食堂现在的就餐人数和容量（ratio = 人数 / 容量）。不在用餐时段时 open 为 false，并附上学校页面的说明。',
     login: 'uis', effect: 'read',
     params: { campus: z.string().optional().describe('只看某个校区：邯郸、枫林、江湾、张江') },
     examples: ['fdu canteen crowd', 'fdu canteen crowd --campus 邯郸'],
     async run(ctx, a) {
-      const r = await readCanteen(ctx.session.reader('jwfw'));
+      let r;
+      try {
+        r = await readCanteen(ctx.session.reader('jwfw'));
+      } catch (e) {
+        // 统一身份认证还有效却被拦在登录页：这个页面要的是二次验证
+        if (e instanceof NeedLoginError && (await platformStatus(ctx.session, 'jwfw')) === 'ok') {
+          throw new FduError('NEED_LOGIN', '食堂人数页面要求二次验证（微信扫码）。', CANTEEN_LOGIN_HINT);
+        }
+        throw e;
+      }
       const campuses = a.campus ? r.campuses.filter((c) => c.campus.includes(a.campus!.replace(/校区$/, ''))) : r.campuses;
       return { ...r, campuses, at: new Date(ctx.now()).toISOString() };
     },

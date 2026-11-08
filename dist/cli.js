@@ -3607,6 +3607,7 @@ var needPrompt = (ctx) => {
   if (!ctx.prompt) throw new FduError("BAD_ARGS", "\u8FD9\u4E2A\u64CD\u4F5C\u9700\u8981\u5728\u7EC8\u7AEF\u91CC\u8F93\u5165\u5BC6\u7801\uFF0C\u8BF7\u76F4\u63A5\u5728\u7EC8\u7AEF\u8FD0\u884C\u3002");
   return ctx.prompt;
 };
+var CANTEEN_LOGIN_HINT = "\u8FD0\u884C `fdu canteen login`\uFF0C\u5728\u6253\u5F00\u7684\u6D4F\u89C8\u5668\u91CC\u6309\u63D0\u793A\u7528\u5FAE\u4FE1\u626B\u7801\uFF0C\u770B\u5230\u9875\u9762\u540E\u7A97\u53E3\u4F1A\u81EA\u52A8\u5173\u95ED\u3002\u9A8C\u8BC1\u6709\u6548\u671F\u7531\u5B66\u6821\u51B3\u5B9A\uFF0C\u8FC7\u671F\u540E\u518D\u8FD0\u884C\u4E00\u6B21\u3002";
 var OPS = [
   // ======================= 账号 =======================
   op({
@@ -4225,6 +4226,31 @@ var OPS = [
     }
   }),
   op({
+    name: "canteen.login",
+    summary: "\u98DF\u5802\u4EBA\u6570\u9875\u9762\u8981\u6C42\u4E8C\u6B21\u9A8C\u8BC1\uFF08\u5FAE\u4FE1\u626B\u7801\uFF09\uFF1A\u6253\u5F00\u6D4F\u89C8\u5668\uFF0C\u6309\u9875\u9762\u63D0\u793A\u5B8C\u6210\u9A8C\u8BC1\uFF0C\u770B\u5230\u98DF\u5802\u4EBA\u6570\u6216\u5F00\u653E\u65F6\u6BB5\u8BF4\u660E\u540E\u7A97\u53E3\u81EA\u52A8\u5173\u95ED\u3002",
+    login: "none",
+    effect: "auth",
+    mcp: false,
+    params: {},
+    async run(ctx) {
+      if (!ctx.session.hasState()) throw new NeedLoginError("jwfw");
+      ctx.log("\u5DF2\u6253\u5F00\u98DF\u5802\u4EBA\u6570\u9875\u9762\uFF1A\u6309\u63D0\u793A\u7528\u5FAE\u4FE1\u626B\u7801\u5B8C\u6210\u4E8C\u6B21\u9A8C\u8BC1\uFF1B\u770B\u5230\u9875\u9762\u5185\u5BB9\u540E\u7A97\u53E3\u4F1A\u81EA\u52A8\u5173\u95ED\u3002");
+      const loaded = (html) => {
+        try {
+          parseCanteen(html);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      let ok = false;
+      await ctx.session.withPage(CANTEEN_URL, (_page, html) => ok = loaded(html), { headless: false, timeoutMs: 3e5 });
+      if (!ok) throw new FduError("NEED_LOGIN", "\u6CA1\u6709\u5B8C\u6210\u4E8C\u6B21\u9A8C\u8BC1\u3002", CANTEEN_LOGIN_HINT);
+      await ctx.session.save();
+      return { verified: true };
+    }
+  }),
+  op({
     name: "canteen.crowd",
     summary: "\u5404\u98DF\u5802\u73B0\u5728\u7684\u5C31\u9910\u4EBA\u6570\u548C\u5BB9\u91CF\uFF08ratio = \u4EBA\u6570 / \u5BB9\u91CF\uFF09\u3002\u4E0D\u5728\u7528\u9910\u65F6\u6BB5\u65F6 open \u4E3A false\uFF0C\u5E76\u9644\u4E0A\u5B66\u6821\u9875\u9762\u7684\u8BF4\u660E\u3002",
     login: "uis",
@@ -4232,7 +4258,15 @@ var OPS = [
     params: { campus: z.string().optional().describe("\u53EA\u770B\u67D0\u4E2A\u6821\u533A\uFF1A\u90AF\u90F8\u3001\u67AB\u6797\u3001\u6C5F\u6E7E\u3001\u5F20\u6C5F") },
     examples: ["fdu canteen crowd", "fdu canteen crowd --campus \u90AF\u90F8"],
     async run(ctx, a) {
-      const r = await readCanteen(ctx.session.reader("jwfw"));
+      let r;
+      try {
+        r = await readCanteen(ctx.session.reader("jwfw"));
+      } catch (e) {
+        if (e instanceof NeedLoginError && await platformStatus(ctx.session, "jwfw") === "ok") {
+          throw new FduError("NEED_LOGIN", "\u98DF\u5802\u4EBA\u6570\u9875\u9762\u8981\u6C42\u4E8C\u6B21\u9A8C\u8BC1\uFF08\u5FAE\u4FE1\u626B\u7801\uFF09\u3002", CANTEEN_LOGIN_HINT);
+        }
+        throw e;
+      }
       const campuses = a.campus ? r.campuses.filter((c) => c.campus.includes(a.campus.replace(/校区$/, ""))) : r.campuses;
       return { ...r, campuses, at: new Date(ctx.now()).toISOString() };
     }

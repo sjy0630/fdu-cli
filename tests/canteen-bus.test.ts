@@ -25,9 +25,9 @@ describe('食堂人数', () => {
   });
 
   it('不在用餐时段时如实说明', () => {
-    const r = parseCanteen('<html><body><p>仅在 10:30-13:00、16:30-19:00 提供查询</p></body></html>');
-    expect(r).toMatchObject({ open: false, campuses: [] });
-    expect(r.note).toContain('仅在');
+    // 实际页面结构（非用餐时段）
+    const r = parseCanteen('<h1>本功能仅在用餐时段开放</h1><ul><li>6:30-9:30</li><li>10:30-13:30</li><li>16:30-19:30</li></ul>');
+    expect(r).toEqual({ open: false, note: '本功能仅在用餐时段开放 6:30-9:30 10:30-13:30 16:30-19:30', campuses: [] });
   });
 
   it('页面改版时报错而不是返回空数据', () => {
