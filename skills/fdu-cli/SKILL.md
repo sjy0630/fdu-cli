@@ -1,6 +1,6 @@
 ---
 name: fdu-cli
-description: 查询复旦大学校园服务：eLearning 课程 / 作业 / DDL / 公告 / 课件下载，iCourse 课程回放和课堂文字稿，教务系统课表 / 考试 / 成绩 / 绩点排名 / 培养方案 / 选课结果，校园卡余额和消费记录，宿舍电量，图书馆人数和文献检索，学校和院系官网通知，树洞和旦克课程评价，学生邮箱。用户问到自己在复旦的课程、作业、考试、成绩、校园生活，或要下载课件、找通知、找文献时使用。
+description: 查询复旦大学校园服务：eLearning 课程 / 作业 / DDL / 公告 / 课件下载，iCourse 课程回放和课堂文字稿，教务系统课表 / 考试 / 成绩 / 绩点排名 / 培养方案 / 选课结果，校园卡余额和消费记录，体育场馆空闲时段，宿舍电量，图书馆人数和文献检索，学校和院系官网通知，树洞和旦克课程评价，学生邮箱。用户问到自己在复旦的课程、作业、考试、成绩、校园生活，或要下载课件、找通知、找文献时使用。
 ---
 
 # 复旦校园服务（fdu-cli）
@@ -54,6 +54,7 @@ description: 查询复旦大学校园服务：eLearning 课程 / 作业 / DDL / 
 | 教务处 / 院系通知 | `fdu notices list --source 教务处`，细节 `fdu notices read --url <链接>` |
 | 找论文 | `fdu library search --query "..." --year-from 2022`，只依据摘要总结，给出 DOI 或链接 |
 | 哪个图书馆人少 | `fdu library seats` |
+| 去哪打球 / 场馆还有空吗 | `fdu venue free --venue "北区 羽毛球" --days 3`（只能看，预约要用户自己去 booking.fudan.edu.cn） |
 | 校园卡 / 电费 | `fdu card balance`、`fdu dorm electricity` |
 | 这个月吃饭花了多少 | `fdu card transactions --from 2026-11-01 --limit 0`（只要统计，不要明细） |
 | 课程口碑 | `fdu danke search --keyword 数据结构` → `fdu danke reviews --id <course_group_id>` |

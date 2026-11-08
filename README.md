@@ -29,6 +29,7 @@ fdu mcp                        # 以 MCP 服务运行
 | 教务系统 | `fdu jw semesters / timetable / exams / grades / gpa / program / selected` | 课表（含研究生）、考试、成绩和绩点、排名、培养方案完成情况、选课结果 |
 | iCourse 课程回放 | `fdu icourse search / terms / lectures / transcript` | 找课程、列出每一讲和有没有回放、读课堂文字稿（自动转写，带时间）；学校审核期内的回放如实说明未开放 |
 | 校园卡 | `fdu card balance`、`fdu card transactions` | 余额；消费记录和统计（总支出、日均、按商户和餐次） |
+| 体育场馆 | `fdu venue list`、`fdu venue free` | 各场馆每个时段还有哪些场地空着（只看，不预约） |
 | 宿舍 | `fdu dorm electricity` | 剩余电量 |
 | 图书馆 | `fdu library seats / search` | 各馆在馆人数；文献检索（不用登录） |
 | 学校通知 | `fdu notices sources / list / read` | 教务处、研究生院、各院系官网通知（不用登录） |
@@ -155,6 +156,14 @@ npm run docs                 # 改了命令后重新生成 skills/fdu-cli/refere
 ```
 
 代码结构和约定见 [AGENTS.md](AGENTS.md)。
+
+### 想接一个新的学校系统？
+
+```bash
+fdu dev capture --url https://fdjwgl.fudan.edu.cn/student/home
+```
+
+会打开一个带着你登录状态的浏览器。点到想做的功能页面、查询一两次，然后关掉窗口，当前目录会生成 `fdu-capture-时间.json`。里面只有页面用到的接口地址、参数名、返回的字段名和类型、表格列名，**不含**姓名、学号、金额等任何具体内容，可以直接附在 issue 里，我们照着把功能做出来。
 
 ## 说明
 

@@ -60,7 +60,7 @@ describe('操作表', () => {
 
   it('需要在终端输入密码的、删除本地状态的不开放给 MCP；其余都能生成参数表', () => {
     const hidden = OPS.filter((o) => o.mcp === false).map((o) => o.name).sort();
-    expect(hidden).toEqual(['auth.logout', 'cache.clear', 'hole.login', 'hole.logout', 'mail.forget', 'mail.setup']);
+    expect(hidden).toEqual(['auth.logout', 'cache.clear', 'dev.capture', 'hole.login', 'hole.logout', 'mail.forget', 'mail.setup']);
     for (const o of OPS) expect(() => z.toJSONSchema(z.object(mcpShape(o)))).not.toThrow();
     expect(toolDescription(findOp('jw.grades')!)).toContain('隐私');
   });

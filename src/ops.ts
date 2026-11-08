@@ -24,6 +24,9 @@ import { runDoctor } from './services/doctor';
 import { clock, IcourseClient, type TranscriptSegment } from './services/icourse';
 import { NeedLoginError } from './core/fudan-auth';
 import { cardRange, readCardRecords, summarize } from './services/ecard';
+import { BOOKING_CAS, bookingReady, listVenues, matchVenues, SPORTS_PAGE, venueCalendar, type GetJson } from './services/venues';
+import { addDays } from './services/calendar';
+import { dedupe, describeCall, type CapturedCall } from './services/capture';
 import { proxyFromEnv } from './core/session';
 
 /** 运行一个操作时能用到的东西 */
@@ -171,6 +174,41 @@ export function transcriptText(segments: TranscriptSegment[], every = 60): strin
   return paras.join('\n');
 }
 
+/**
+ * 在浏览器里打开场馆预约页，再用页面里的请求读数据（预约系统有防爬虫验证，后台请求会被拒绝）。
+ * 预约系统没登录时，走一次它的统一身份认证入口（复用复旦账号登录状态）。
+ */
+async function withBooking<T>(ctx: Ctx, work: (getJson: GetJson) => Promise<T>): Promise<T> {
+  if (!ctx.session.hasState()) throw new NeedLoginError('jwfw');
+  let result: { value: T } | undefined;
+  let failure: unknown;
+  let triedLogin = false;
+  await ctx.session.withPage(SPORTS_PAGE, async (page) => {
+    if (new URL(page.url()).hostname !== 'booking.fudan.edu.cn') return false;
+    const getJson: GetJson = (url) => page.evaluate(async (u: string) => {
+      const r = await fetch(u, { credentials: 'include', headers: { Accept: 'application/json' } });
+      return { status: r.status, text: await r.text() };
+    }, url);
+    try {
+      if (!(await bookingReady(getJson))) {
+        if (triedLogin) throw new NeedLoginError('jwfw');
+        triedLogin = true;
+        await page.goto(BOOKING_CAS, { timeout: 30_000 }).catch(() => undefined);
+        return false;
+      }
+      result = { value: await work(getJson) };
+    } catch (e) {
+      // 页面正在跳转时请求会失败，等下一轮再试
+      if (e instanceof Error && /Execution context was destroyed|navigat/i.test(e.message)) return false;
+      failure = e;
+    }
+    return true;
+  }, { headless: true, timeoutMs: 60_000, platform: 'jwfw' });
+  if (failure) throw failure;
+  if (!result) throw new FduError('UPSTREAM', '场馆预约系统没有打开。', '稍后再试；也可以直接在浏览器里打开 booking.fudan.edu.cn 查看。');
+  return result.value;
+}
+
 /** 汇总和导出日历用的三类数据 */
 function overviewDeps(ctx: Ctx): OverviewDeps {
   const reader = ctx.session.reader('jwfw');
@@ -240,6 +278,28 @@ export const OPS: Op[] = [
         mail: !!ctx.store.readJson<MailConfig>(MAIL)?.user,
         proxy: proxyFromEnv()?.server,
       });
+    },
+  }),
+  op({
+    name: 'dev.capture', summary: '开发新功能用：打开浏览器（带着复旦账号登录状态），你在里面操作某个学校系统的页面，关掉窗口后把页面用到的接口结构存成文件——只有地址、参数名、返回的字段名和类型、表格列名，不含姓名、学号、金额等任何具体内容，可以直接发给开发者。',
+    login: 'none', effect: 'local-write', mcp: false, cache: false,
+    params: {
+      url: z.string().url().describe('从哪个页面开始，如 https://fdjwgl.fudan.edu.cn/student/home'),
+      out: z.string().optional().describe('结果保存到哪里，默认当前目录的 fdu-capture-时间.json'),
+      minutes: int('最多录多久（分钟），默认 10', 1, 60),
+    },
+    examples: ['fdu dev capture --url https://fdjwgl.fudan.edu.cn/student/home'],
+    async run(ctx, a) {
+      const calls: CapturedCall[] = [];
+      ctx.log('已打开浏览器：请点到要做的功能页面，查询一两次，然后关掉浏览器窗口。');
+      await ctx.session.record(a.url, async (r) => { const c = await describeCall(r); if (c) calls.push(c); }, (a.minutes ?? 10) * 60_000);
+      const result = dedupe(calls).filter((c) => !/google|baidu|cnzz|analytics/i.test(c.endpoint));
+      const stamp = new Date(ctx.now()).toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const target = resolve(ctx.cwd, a.out ?? `fdu-capture-${stamp}.json`);
+      mkdirSync(dirname(target), { recursive: true });
+      const path = safeTarget(dirname(target), basename(target));
+      writeFileSync(path, JSON.stringify({ startUrl: a.url.split('?')[0], capturedAt: new Date(ctx.now()).toISOString(), calls: result }, null, 2));
+      return { path, calls: result.length, endpoints: result.map((c) => `${c.method} ${c.endpoint}`).slice(0, 50) };
     },
   }),
   op({
@@ -544,6 +604,35 @@ export const OPS: Op[] = [
         ...(picked.length > limit ? { note: `只列出最新 ${limit} 条明细，统计按全部 ${picked.length} 条计算；要全部明细用 --limit ${Math.min(2000, picked.length)}。` } : {}),
         ...(truncated ? { truncated: true, note: '记录太多，只读了最近的一部分；缩短日期范围可以读全。' } : {}),
       };
+    },
+  }),
+  op({
+    name: 'venue.list', summary: '可以预约的体育场馆（id、名称），如「北区体育馆-羽毛球」。', login: 'uis', effect: 'read', params: {},
+    async run(ctx) { return withBooking(ctx, listVenues); },
+  }),
+  op({
+    name: 'venue.free', summary: '体育场馆的空闲时段：每个时段还有哪些场地空着（只看，不预约）。场馆可以写 id 或名称关键词（如「北区 羽毛球」）。', login: 'uis', effect: 'read',
+    params: {
+      venue: z.string().min(1).describe('场馆 id 或名称关键词，多个词用空格分开'),
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('日期 YYYY-MM-DD，默认今天'),
+      days: int('连看几天，默认 1', 1, 7),
+      all: flag('也列出已经约满的时段'),
+    },
+    examples: ['fdu venue free --venue "北区 羽毛球"', 'fdu venue free --venue 正大 --date 2026-11-10 --days 3'],
+    async run(ctx, a) {
+      const from = a.date ?? shanghaiDay(ctx.now());
+      const to = addDays(from, (a.days ?? 1) - 1);
+      return withBooking(ctx, async (getJson) => {
+        const matched = matchVenues(await listVenues(getJson), a.venue);
+        if (!matched.length) throw new FduError('NOT_FOUND', `没有找到场馆「${a.venue}」。`, '用 `fdu venue list` 查看场馆名称。');
+        if (matched.length > 5) throw new FduError('BAD_ARGS', `「${a.venue}」对应了 ${matched.length} 个场馆，请写得更具体一些：${matched.slice(0, 8).map((v) => v.name).join('、')}……`);
+        const out = [];
+        for (const v of matched) {
+          const days = await venueCalendar(getJson, v.id, from, to);
+          out.push({ venue: v.name, id: v.id, days: a.all ? days : days.map((d) => ({ ...d, slots: d.slots.filter((s) => s.free.length) })) });
+        }
+        return { from, to, venues: out, note: '只是查看空闲情况；预约请到 booking.fudan.edu.cn。' };
+      });
     },
   }),
   op({

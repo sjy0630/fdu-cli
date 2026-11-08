@@ -141,6 +141,44 @@ export class Session {
     }
   }
 
+  /**
+   * 打开有界面的浏览器，记录页面发出的数据请求（开发新功能时用，见 fdu dev capture）。
+   * 每个请求交给 onResponse 处理（只应保留结构，不保留内容）；用户关掉窗口或超时后结束，Cookie 写回会话。
+   */
+  async record(url: string, onResponse: (r: { method: string; url: string; status: number; contentType: string; resourceType: string; body: () => Promise<string>; postData?: string }) => Promise<void>, timeoutMs = 600_000): Promise<void> {
+    const browser = await this.launch(false);
+    const context = await browser.newContext({ storageState: await this.state(), proxy: proxyFromEnv(), viewport: null });
+    const pending: Promise<void>[] = [];
+    context.on('response', (res) => {
+      const req = res.request();
+      if (!['xhr', 'fetch', 'document'].includes(req.resourceType())) return;
+      pending.push(onResponse({
+        method: req.method(), url: res.url(), status: res.status(), contentType: res.headers()['content-type'] ?? '', resourceType: req.resourceType(),
+        body: () => res.text(), postData: req.postData() ?? undefined,
+      }).catch(() => undefined));
+    });
+    try {
+      const page = await context.newPage();
+      void page.goto(url, { timeout: 60_000 }).catch(() => undefined);
+      await Promise.race([
+        new Promise<void>((resolve) => { context.on('close', () => resolve()); browser.on('disconnected', () => resolve()); page.on('close', () => resolve()); }),
+        sleep(timeoutMs),
+      ]);
+      await Promise.all(pending);
+      if (browser.isConnected()) {
+        const state = await context.storageState().catch(() => undefined);
+        if (state && (this.hasState() || this.fromBrowser)) {
+          const old = this.ctx;
+          this.ctx = await request.newContext({ storageState: state, userAgent: UA, timeout: 20_000, proxy: proxyFromEnv() });
+          this.dirty = true;
+          if (old) setTimeout(() => { void old.dispose().catch(() => undefined); }, 30_000).unref();
+        }
+      }
+    } finally {
+      await browser.close().catch(() => undefined);
+    }
+  }
+
   /** 页面脚本渲染完再读（只读页面内容，不点击、不提交） */
   async render(platform: FudanPlatform, url: string, ready: (html: string, url: string) => boolean, timeoutMs = 25_000): Promise<string> {
     let ok = false;

@@ -48,6 +48,24 @@ fdu login --webvpn
 fdu doctor
 ```
 
+## dev
+
+### `fdu dev capture`
+
+开发新功能用：打开浏览器（带着复旦账号登录状态），你在里面操作某个学校系统的页面，关掉窗口后把页面用到的接口结构存成文件——只有地址、参数名、返回的字段名和类型、表格列名，不含姓名、学号、金额等任何具体内容，可以直接发给开发者。
+
+登录：不用 · 会写本机文件 · 仅命令行
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `--url` | string | 是 | 从哪个页面开始，如 https://fdjwgl.fudan.edu.cn/student/home |
+| `--out` | string |  | 结果保存到哪里，默认当前目录的 fdu-capture-时间.json |
+| `--minutes` | integer |  | 最多录多久（分钟），默认 10 |
+
+```bash
+fdu dev capture --url https://fdjwgl.fudan.edu.cn/student/home
+```
+
 ## 缓存
 
 ### `fdu cache clear`
@@ -343,6 +361,32 @@ fdu icourse transcript --course 12345 --lecture 67890 --offset 30000
 fdu card transactions
 fdu card transactions --days 30 --limit 0
 fdu card transactions --from 2026-10-01 --to 2026-10-31
+```
+
+## venue
+
+### `fdu venue list`
+
+可以预约的体育场馆（id、名称），如「北区体育馆-羽毛球」。
+
+登录：复旦账号 · 只读 · MCP：`venue_list`
+
+### `fdu venue free`
+
+体育场馆的空闲时段：每个时段还有哪些场地空着（只看，不预约）。场馆可以写 id 或名称关键词（如「北区 羽毛球」）。
+
+登录：复旦账号 · 只读 · MCP：`venue_free`
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `--venue` | string | 是 | 场馆 id 或名称关键词，多个词用空格分开 |
+| `--date` | string |  | 日期 YYYY-MM-DD，默认今天 |
+| `--days` | integer |  | 连看几天，默认 1 |
+| `--all` | boolean |  | 也列出已经约满的时段 |
+
+```bash
+fdu venue free --venue "北区 羽毛球"
+fdu venue free --venue 正大 --date 2026-11-10 --days 3
 ```
 
 ## 宿舍
