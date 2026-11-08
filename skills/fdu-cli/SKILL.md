@@ -13,7 +13,7 @@ description: 查询复旦大学校园服务：eLearning 课程 / 作业 / DDL / 
 - 否则在终端运行 `fdu <服务> <操作> --参数 值 --compact`，读 stdout 里的 JSON：
   - 成功：`{"ok":true,"data":...}`
   - 失败：`{"ok":false,"error":{"code":"...","message":"...","hint":"..."}}`，照 `hint` 处理。
-- 不确定参数时先 `fdu describe <服务.操作>`；全部命令见同目录的 [reference.md](reference.md)，或运行 `fdu services`。
+- 不确定参数时先 `fdu describe <服务.操作>`（JSON）；全部命令见同目录的 [reference.md](reference.md)，或运行 `fdu services`。用户问怎么用这个工具时，可以让他运行 `fdu help`。
 
 ## 登录
 

@@ -10,6 +10,7 @@
     "dist",
     "skills",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "engines": {
@@ -40,5 +41,23 @@
     "typescript": "5.9.3",
     "vitest": "3.2.7"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sjy0630/fdu-cli.git"
+  },
+  "homepage": "https://github.com/sjy0630/fdu-cli#readme",
+  "bugs": {
+    "url": "https://github.com/sjy0630/fdu-cli/issues"
+  },
+  "keywords": [
+    "fudan",
+    "复旦",
+    "cli",
+    "mcp",
+    "claude-code",
+    "codex",
+    "elearning",
+    "campus"
+  ]
 }

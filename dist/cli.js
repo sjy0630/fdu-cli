@@ -3922,7 +3922,7 @@ var OPS = [
   }),
   op({
     name: "jw.syllabus",
-    summary: "\u67D0\u4E2A\u6559\u5B66\u73ED\u7684\u6559\u5B66\u5927\u7EB2\uFF08\u8BFE\u7A0B\u76EE\u6807\u3001\u5185\u5BB9\u5B89\u6392\u3001\u8003\u6838\u65B9\u5F0F\u3001\u6559\u6750\u7B49\uFF09\uFF0C\u8F6C\u6210\u7EAF\u6587\u672C\u3002\u6559\u5B66\u73ED id \u6765\u81EA fdu jw lessons\u3002",
+    summary: "\u67D0\u4E2A\u6559\u5B66\u73ED\u7684\u6559\u5B66\u5927\u7EB2\uFF1A\u8BFE\u7A0B\u4FE1\u606F\u3001\u7B80\u4ECB\u3001\u6559\u5B66\u76EE\u6807\u3001\u6BCF\u5468\u5185\u5BB9\u5B89\u6392\u3001\u8003\u6838\u65B9\u5F0F\u548C\u6743\u91CD\u3001\u6559\u6750\u3001\u6559\u5B66\u56E2\u961F\u3002\u6559\u5B66\u73ED id \u6765\u81EA fdu jw lessons\u3002",
     login: "uis",
     effect: "read",
     params: { lesson: z.string().regex(/^\d+$/).describe("\u6559\u5B66\u73ED id\uFF08fdu jw lessons \u7ED3\u679C\u91CC\u7684 id\uFF09"), maxChars: int2("\u6700\u591A\u8FD4\u56DE\u591A\u5C11\u5B57\uFF0C\u9ED8\u8BA4 30000", 1e3, 2e5) },
@@ -4600,6 +4600,114 @@ async function serveMcp(opts = {}) {
   await server.connect(new StdioServerTransport());
 }
 
+// src/groups.ts
+var GROUPS = [
+  { id: "overview", name: "\u6C47\u603B", desc: "\u4ECA\u5929 / \u8FD9\u5468\u7684\u8BFE\u3001\u8981\u4EA4\u7684\u4F5C\u4E1A\u3001\u8003\u8BD5\uFF08\u7B80\u5199 fdu today\u3001fdu week\uFF09" },
+  { id: "auth", name: "\u8D26\u53F7\u4E0E\u73AF\u5883", desc: "\u767B\u5F55\u590D\u65E6\u7EDF\u4E00\u8EAB\u4EFD\u8BA4\u8BC1\u3001\u67E5\u770B\u767B\u5F55\u72B6\u6001\u3001\u68C0\u67E5\u73AF\u5883\uFF08\u7B80\u5199 fdu login\u3001fdu status\u3001fdu doctor\uFF09" },
+  { id: "elearning", name: "eLearning", desc: "\u8BFE\u7A0B\u3001\u4F5C\u4E1A\u548C\u622A\u6B62\u65F6\u95F4\u3001\u516C\u544A\u3001\u8BFE\u4EF6\u4E0B\u8F7D\uFF08\u7B80\u5199 fdu todo\uFF09" },
+  { id: "jw", name: "\u6559\u52A1\u7CFB\u7EDF", desc: "\u8BFE\u8868\u3001\u8003\u8BD5\u3001\u6210\u7EE9\u7EE9\u70B9\u3001\u57F9\u517B\u65B9\u6848\u3001\u9009\u8BFE\u7ED3\u679C\u3001\u5168\u6821\u5F00\u8BFE\u67E5\u8BE2\u3001\u6559\u5B66\u5927\u7EB2\u3001\u6559\u5B66\u5468" },
+  { id: "icourse", name: "iCourse \u8BFE\u7A0B\u56DE\u653E", desc: "\u627E\u8BFE\u7A0B\u3001\u8BB2\u6B21\u5217\u8868\u3001\u8BFE\u5802\u6587\u5B57\u7A3F" },
+  { id: "rooms", name: "\u6559\u5BA4", desc: "\u5404\u6559\u5B66\u697C\u6BCF\u95F4\u6559\u5BA4\u7684\u5B89\u6392\u3001\u7A7A\u95F2\u65F6\u6BB5\u3001\u73B0\u5728\u7684\u72B6\u6001\uFF08\u7ECF WebVPN\uFF09" },
+  { id: "card", name: "\u6821\u56ED\u5361", desc: "\u4F59\u989D\u3001\u6D88\u8D39\u8BB0\u5F55\u548C\u7EDF\u8BA1" },
+  { id: "library", name: "\u56FE\u4E66\u9986", desc: "\u5728\u9986\u4EBA\u6570\u3001\u6587\u732E\u68C0\u7D22\u3001\u5728\u501F\u7684\u4E66\u548C\u501F\u9605\u5386\u53F2" },
+  { id: "notices", name: "\u5B66\u6821\u901A\u77E5", desc: "\u6559\u52A1\u5904\u3001\u7814\u7A76\u751F\u9662\u3001\u5404\u9662\u7CFB\u5B98\u7F51\u7684\u901A\u77E5" },
+  { id: "venue", name: "\u4F53\u80B2\u573A\u9986", desc: "\u5404\u573A\u9986\u6BCF\u4E2A\u65F6\u6BB5\u8FD8\u6709\u54EA\u4E9B\u573A\u5730\u7A7A\u7740\uFF08\u53EA\u770B\uFF0C\u4E0D\u9884\u7EA6\uFF09" },
+  { id: "dorm", name: "\u5BBF\u820D", desc: "\u5269\u4F59\u7535\u91CF" },
+  { id: "hole", name: "\u6811\u6D1E", desc: "\u641C\u7D22\u548C\u9605\u8BFB\u6811\u6D1E\u5E16\u5B50\uFF08\u9700\u8981\u6811\u6D1E\u8D26\u53F7\uFF09" },
+  { id: "danke", name: "\u65E6\u514B", desc: "\u8BFE\u7A0B\u8BC4\u4EF7\uFF08\u9700\u8981\u6811\u6D1E\u8D26\u53F7\uFF09" },
+  { id: "mail", name: "\u5B66\u751F\u90AE\u7BB1", desc: "\u6536\u4EF6\u7BB1\uFF08IMAP \u53EA\u8BFB\uFF0C\u9700\u8981\u5BA2\u6237\u7AEF\u4E13\u7528\u5BC6\u7801\uFF09" },
+  { id: "calendar", name: "\u65E5\u5386", desc: "\u628A\u8BFE\u8868\u3001\u8003\u8BD5\u3001\u4F5C\u4E1A\u622A\u6B62\u5BFC\u51FA\u6210 .ics" },
+  { id: "cache", name: "\u7F13\u5B58", desc: "\u672C\u673A\u7F13\u5B58\u7684\u67E5\u8BE2\u7ED3\u679C" },
+  { id: "dev", name: "\u5F00\u53D1", desc: "\u5F55\u5236\u5B66\u6821\u7CFB\u7EDF\u9875\u9762\u7528\u5230\u7684\u63A5\u53E3\u7ED3\u6784\uFF08\u63A5\u5165\u65B0\u7CFB\u7EDF\u65F6\u7528\uFF09" }
+];
+var groupOf = (id) => GROUPS.find((g) => g.id === id);
+
+// src/help.ts
+var LOGIN = {
+  uis: "\u590D\u65E6\u8D26\u53F7\uFF08fdu login\uFF09",
+  hole: "\u6811\u6D1E\u8D26\u53F7\uFF08fdu hole login\uFF09",
+  mail: "\u5B66\u751F\u90AE\u7BB1\uFF08fdu mail setup\uFF09",
+  none: "\u4E0D\u7528\u767B\u5F55"
+};
+var ALIAS = { "auth.login": "fdu login", "auth.logout": "fdu logout", "auth.status": "fdu status", "auth.doctor": "fdu doctor", "elearning.todo": "fdu todo", "overview.today": "fdu today", "overview.week": "fdu week" };
+var width = (s) => [...s].reduce((n, c) => n + (/[ᄀ-￿]/.test(c) ? 2 : 1), 0);
+var pad2 = (s, w) => s + " ".repeat(Math.max(1, w - width(s)));
+var firstSentence = (s) => {
+  let t = s.split(/[。：:]/)[0];
+  for (const cut of ["\uFF08", "\uFF0C", "\u3001"]) {
+    if (width(t) <= 46) break;
+    const i = t.indexOf(cut);
+    if (i >= 4) t = t.slice(0, i);
+  }
+  return t;
+};
+var command = (op2) => ALIAS[op2.name] ?? `fdu ${op2.name.replace(".", " ")}`;
+function helpOverview(version) {
+  const lines = [
+    `fdu ${version} \u2014 \u590D\u65E6\u6821\u56ED\u670D\u52A1\u547D\u4EE4\u884C\u548C MCP \u670D\u52A1\uFF08\u8F93\u51FA JSON\uFF0C\u7ED9 Claude Code\u3001Codex \u7B49\u4F7F\u7528\uFF09`,
+    "",
+    "\u5FEB\u901F\u5F00\u59CB\uFF1A",
+    "  fdu doctor                 \u68C0\u67E5\u73AF\u5883\u3001\u7F51\u7EDC\u548C\u767B\u5F55\u72B6\u6001",
+    "  fdu login                  \u767B\u5F55\u590D\u65E6\u7EDF\u4E00\u8EAB\u4EFD\u8BA4\u8BC1\uFF08\u6253\u5F00\u6D4F\u89C8\u5668\uFF0C\u4F60\u81EA\u5DF1\u8F93\u5165\u8D26\u53F7\u5BC6\u7801\uFF09",
+    "  fdu today                  \u4ECA\u5929\u7684\u8BFE\u3001\u5FEB\u5230\u671F\u7684\u4F5C\u4E1A\u3001\u8003\u8BD5",
+    "  fdu mcp                    \u4EE5 MCP \u670D\u52A1\u8FD0\u884C\uFF08\u63A5\u5165 Claude Code\u3001Codex \u7B49\uFF09",
+    "",
+    "\u5168\u90E8\u547D\u4EE4\uFF1A"
+  ];
+  for (const g of GROUPS) {
+    const ops = OPS.filter((o) => o.name.startsWith(`${g.id}.`));
+    if (!ops.length) continue;
+    lines.push("", `  ${g.name}\uFF08fdu help ${g.id}\uFF09`);
+    for (const o of ops) lines.push(`    ${pad2(command(o), 30)}${firstSentence(o.summary)}`);
+  }
+  lines.push(
+    "",
+    "\u901A\u7528\u53C2\u6570\uFF1A",
+    "  --compact          \u8F93\u51FA\u5355\u884C JSON",
+    "  --cached           \u4E0D\u8054\u7F51\uFF0C\u8FD4\u56DE\u4E0A\u6B21\u67E5\u8BE2\u7684\u7ED3\u679C\uFF08\u53EA\u8BFB\u547D\u4EE4\uFF09",
+    "  --profile \u540D\u79F0     \u4F7F\u7528\u53E6\u4E00\u5957\u767B\u5F55\u72B6\u6001",
+    "  --browser \u8DEF\u5F84     \u6307\u5B9A Chromium \u5185\u6838\u6D4F\u89C8\u5668\uFF08\u9ED8\u8BA4\u627E\u672C\u673A Chrome / Edge\uFF09",
+    "",
+    '\u8F93\u51FA\uFF1A\u6210\u529F {"ok":true,"data":...}\uFF1B\u5931\u8D25 {"ok":false,"error":{"code","message","hint"}}\uFF0C\u7167 hint \u5904\u7406\u3002',
+    "\u9000\u51FA\u7801\uFF1A0 \u6210\u529F\uFF1B2 \u53C2\u6570\u9519\u8BEF\uFF1B3 \u9700\u8981\u767B\u5F55\u6216\u914D\u7F6E\uFF1B1 \u5176\u4ED6\u9519\u8BEF\u3002",
+    "",
+    "\u66F4\u591A\uFF1Afdu help <\u670D\u52A1>\u3001fdu help <\u670D\u52A1> <\u547D\u4EE4>\uFF1B\u7ED9 AI \u770B\u7684 JSON \u8BF4\u660E\uFF1Afdu describe <\u670D\u52A1.\u547D\u4EE4>\u3001fdu services",
+    "\u6587\u6863\uFF1Ahttps://github.com/sjy0630/fdu-cli"
+  );
+  return `${lines.join("\n")}
+`;
+}
+function helpGroup(id) {
+  const g = groupOf(id);
+  const ops = OPS.filter((o) => o.name.startsWith(`${id}.`));
+  if (!g || !ops.length) return void 0;
+  const lines = [`${g.name}\uFF1A${g.desc}`, ""];
+  for (const o of ops) {
+    lines.push(`  ${command(o)}`, `    ${o.summary}`);
+    const d = describeOp(o);
+    if (d.params.length) lines.push(`    \u53C2\u6570\uFF1A${d.params.map((p) => p.required ? p.flag : `[${p.flag}]`).join(" ")}`);
+    lines.push("");
+  }
+  lines.push(`\u8BE6\u7EC6\u8BF4\u660E\uFF1Afdu help ${id} <\u547D\u4EE4>`);
+  return `${lines.join("\n")}
+`;
+}
+function helpOp(op2) {
+  const d = describeOp(op2);
+  const lines = [command(op2), "", op2.summary, "", `\u767B\u5F55\uFF1A${LOGIN[op2.login]}`];
+  if (op2.sensitive) lines.push("\u9690\u79C1\uFF1A\u8FD4\u56DE\u6210\u7EE9 / \u6D88\u8D39 / \u501F\u9605 / \u90AE\u4EF6\u7B49\u9690\u79C1\u6570\u636E\uFF0C\u53EA\u7528\u6765\u56DE\u7B54\u4F60\u672C\u4EBA\u7684\u95EE\u9898");
+  if (op2.effect === "local-write") lines.push("\u4F1A\u5728\u672C\u673A\u5199\u6587\u4EF6\uFF08\u4E0D\u8986\u76D6\u5DF2\u6709\u6587\u4EF6\uFF09");
+  lines.push(op2.mcp === false ? "MCP\uFF1A\u4E0D\u63D0\u4F9B\uFF08\u9700\u8981\u5728\u7EC8\u7AEF\u91CC\u64CD\u4F5C\uFF09" : `MCP \u5DE5\u5177\uFF1A${d.mcpTool}`);
+  if (d.params.length) {
+    lines.push("", "\u53C2\u6570\uFF1A");
+    const w = Math.max(...d.params.map((p) => width(p.flag))) + 2;
+    for (const p of d.params) lines.push(`  ${pad2(p.flag, w)}${p.required ? "\uFF08\u5FC5\u586B\uFF09" : ""}${p.description ?? ""}`);
+  }
+  if (d.examples.length) lines.push("", "\u793A\u4F8B\uFF1A", ...d.examples.map((e) => `  ${e}`));
+  return `${lines.join("\n")}
+`;
+}
+
 // src/cli.ts
 var VERSION2 = true ? "0.1.0" : "0.0.0-dev";
 var ALIASES = {
@@ -4663,21 +4771,6 @@ function prompt(question, opts = {}) {
     });
   });
 }
-var HELP = `fdu ${VERSION2} \u2014 \u590D\u65E6\u6821\u56ED\u670D\u52A1\u547D\u4EE4\u884C\uFF08\u8F93\u51FA JSON\uFF09
-
-\u7528\u6CD5\uFF1A
-  fdu login [--webvpn]            \u767B\u5F55\u590D\u65E6\u7EDF\u4E00\u8EAB\u4EFD\u8BA4\u8BC1\uFF08\u6253\u5F00\u6D4F\u89C8\u5668\uFF0C\u4F60\u81EA\u5DF1\u8F93\u5165\u8D26\u53F7\u5BC6\u7801\uFF09
-  fdu status                      \u5404\u7CFB\u7EDF\u7684\u767B\u5F55\u72B6\u6001
-  fdu doctor                      \u68C0\u67E5\u73AF\u5883\u3001\u7F51\u7EDC\u548C\u767B\u5F55\uFF0C\u7ED9\u51FA\u4FEE\u590D\u5EFA\u8BAE
-  fdu today / fdu week            \u4ECA\u5929 / \u8FD9\u5468\u7684\u8BFE\u3001\u8981\u4EA4\u7684\u4F5C\u4E1A\u3001\u8003\u8BD5
-  fdu <\u670D\u52A1> <\u64CD\u4F5C> [--\u53C2\u6570 \u503C]    \u4F8B\u5982 fdu jw timetable\u3001fdu elearning todo --days 7
-  fdu services                    \u5217\u51FA\u5168\u90E8\u64CD\u4F5C
-  fdu describe <\u670D\u52A1.\u64CD\u4F5C>         \u67E5\u770B\u53C2\u6570\u548C\u793A\u4F8B
-  fdu mcp                         \u4EE5 MCP \u670D\u52A1\u8FD0\u884C\uFF08\u7ED9 Claude Code\u3001Codex \u7B49\u7528\uFF09
-
-\u901A\u7528\u53C2\u6570\uFF1A--compact \u7D27\u51D1\u8F93\u51FA\uFF1B--cached \u4E0D\u8054\u7F51\uFF0C\u8FD4\u56DE\u4E0A\u6B21\u67E5\u8BE2\u7684\u7ED3\u679C\uFF1B--profile \u540D\u79F0 \u4F7F\u7528\u53E6\u4E00\u5957\u767B\u5F55\u72B6\u6001\uFF1B--browser \u8DEF\u5F84 \u6307\u5B9A\u6D4F\u89C8\u5668
-\u670D\u52A1\uFF1Aauth\u3001overview\uFF08\u6C47\u603B\uFF09\u3001calendar\uFF08\u5BFC\u51FA\u65E5\u5386\uFF09\u3001elearning\u3001jw\uFF08\u6559\u52A1\uFF09\u3001card\u3001dorm\u3001library\u3001notices\u3001hole\uFF08\u6811\u6D1E\uFF09\u3001danke\uFF08\u65E6\u514B\uFF09\u3001mail\u3001cache
-`;
 async function main(argv) {
   const { positionals, flags } = parseArgs(argv);
   const print = (v) => process.stdout.write(`${JSON.stringify(v, null, flags.compact ? 0 : 2)}
@@ -4688,9 +4781,23 @@ async function main(argv) {
     return 0;
   }
   const [first2] = positionals;
-  if (!first2 || flags.help && !first2 || first2 === "help") {
-    process.stdout.write(HELP);
+  const text = (t) => {
+    process.stdout.write(t);
     return 0;
+  };
+  if (!first2) return text(helpOverview(VERSION2));
+  if (flags.help && first2 !== "help" && !findOp(resolveOpName(positionals).name ?? "") && !groupOf(first2)) return text(helpOverview(VERSION2));
+  if (first2 === "help") {
+    const rest2 = positionals.slice(1);
+    if (!rest2.length) return text(helpOverview(VERSION2));
+    const target = rest2.length > 1 || rest2[0].includes(".") || ALIASES[rest2[0]] ? resolveOpName(rest2).name : void 0;
+    const op3 = target ? findOp(target) : void 0;
+    if (op3) return text(helpOp(op3));
+    const g = helpGroup(rest2[0]);
+    if (g && rest2.length === 1) return text(g);
+    process.stdout.write(`\u6CA1\u6709\u8FD9\u4E2A\u547D\u4EE4\uFF1A${rest2.join(" ")}\u3002\u8FD0\u884C fdu help \u67E5\u770B\u5168\u90E8\u547D\u4EE4\u3002
+`);
+    return 2;
   }
   const profile = typeof flags.profile === "string" ? flags.profile : void 0;
   const browser = typeof flags.browser === "string" ? flags.browser : void 0;
@@ -4714,18 +4821,16 @@ async function main(argv) {
   }
   const { name, rest } = resolveOpName(positionals);
   const op2 = name ? findOp(name) : void 0;
+  if (!op2 && positionals.length === 1 && groupOf(first2)) return text(helpGroup(first2) ?? helpOverview(VERSION2));
   if (!op2) {
-    print({ ok: false, error: { code: "NOT_FOUND", message: `\u6CA1\u6709\u8FD9\u4E2A\u547D\u4EE4\uFF1A${positionals.join(" ")}`, hint: "\u7528 `fdu services` \u67E5\u770B\u5168\u90E8\u64CD\u4F5C\uFF0C\u6216 `fdu --help`\u3002" } });
+    print({ ok: false, error: { code: "NOT_FOUND", message: `\u6CA1\u6709\u8FD9\u4E2A\u547D\u4EE4\uFF1A${positionals.join(" ")}`, hint: "\u8FD0\u884C `fdu help` \u67E5\u770B\u5168\u90E8\u547D\u4EE4\uFF08\u7ED9 AI \u770B\u7684 JSON \u5217\u8868\uFF1A`fdu services`\uFF09\u3002" } });
     return 2;
   }
   if (rest.length) {
     print({ ok: false, op: op2.name, error: { code: "BAD_ARGS", message: `\u591A\u4F59\u7684\u53C2\u6570\uFF1A${rest.join(" ")}`, hint: `\u53C2\u6570\u8981\u5199\u6210 --\u540D\u5B57 \u503C\uFF0C\u7528 \`fdu describe ${op2.name}\` \u67E5\u770B\u3002` } });
     return 2;
   }
-  if (flags.help) {
-    print({ ok: true, data: describeOp(op2) });
-    return 0;
-  }
+  if (flags.help) return text(helpOp(op2));
   const store = new Store(profile);
   const session = new Session(store, { browserPath: browser, headed: flags.headed === true });
   const input = Object.fromEntries(Object.entries(flags).filter(([k]) => !GLOBAL.has(k)).map(([k, v]) => [camel(k), v]));

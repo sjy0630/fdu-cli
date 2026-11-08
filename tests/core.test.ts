@@ -217,3 +217,33 @@ describe('浏览器标识', () => {
     expect(userAgent('linux')).not.toMatch(/fdu/i);
   });
 });
+
+describe('帮助', () => {
+  const capture = async (args: string[]) => {
+    const out: string[] = [];
+    const spy = vi.spyOn(process.stdout, 'write').mockImplementation((s) => { out.push(String(s)); return true; });
+    try { return { code: await main(args), text: out.join('') }; } finally { spy.mockRestore(); }
+  };
+
+  it('每个命令都属于登记过的服务分组（帮助和命令参考不会漏）', async () => {
+    const { GROUPS } = await import('../src/groups');
+    for (const o of OPS) expect(GROUPS.map((g) => g.id)).toContain(o.name.split('.')[0]);
+  });
+
+  it('fdu help：快速开始和全部命令；fdu help jw / fdu jw：一个服务；--help：一个命令', async () => {
+    const all = await capture(['help']);
+    expect(all.code).toBe(0);
+    expect(all.text).toContain('快速开始');
+    for (const o of OPS.filter((x) => !['auth.login', 'auth.status', 'auth.logout', 'auth.doctor', 'elearning.todo', 'overview.today', 'overview.week'].includes(x.name))) {
+      expect(all.text).toContain(`fdu ${o.name.replace('.', ' ')}`);
+    }
+    expect((await capture([])).text).toContain('快速开始');
+    expect((await capture(['help', 'jw'])).text).toContain('fdu jw lessons');
+    expect((await capture(['jw'])).text).toContain('fdu jw timetable');
+    const one = await capture(['jw', 'grades', '--help']);
+    expect(one.text).toMatch(/登录：复旦账号[\s\S]*隐私/);
+    expect((await capture(['help', 'today'])).text).toContain('fdu today');
+    expect((await capture(['help', 'jw.gpa'])).text).toContain('--student-number');
+    expect((await capture(['help', 'nope'])).code).toBe(2);
+  });
+});

@@ -18,6 +18,8 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm pack && mv fdu-cli-*.tgz fdu-cli.tgz
+      # 说明取自 CHANGELOG.md 里这个版本的那一节
+      - run: awk -v v="## ${GITHUB_REF_NAME#v} " 'index($0, v) == 1 { p = 1; next } /^## / { if (p) exit } p' CHANGELOG.md > notes.md && test -s notes.md
       - env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" fdu-cli.tgz --title "$GITHUB_REF_NAME" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" fdu-cli.tgz --title "fdu-cli $GITHUB_REF_NAME" --notes-file notes.md

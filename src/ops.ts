@@ -668,7 +668,7 @@ export const OPS: Op[] = [
     },
   }),
   op({
-    name: 'jw.syllabus', summary: '某个教学班的教学大纲（课程目标、内容安排、考核方式、教材等），转成纯文本。教学班 id 来自 fdu jw lessons。', login: 'uis', effect: 'read',
+    name: 'jw.syllabus', summary: '某个教学班的教学大纲：课程信息、简介、教学目标、每周内容安排、考核方式和权重、教材、教学团队。教学班 id 来自 fdu jw lessons。', login: 'uis', effect: 'read',
     params: { lesson: z.string().regex(/^\d+$/).describe('教学班 id（fdu jw lessons 结果里的 id）'), maxChars: int('最多返回多少字，默认 30000', 1000, 200_000) },
     examples: ['fdu jw syllabus --lesson 1037803'],
     async run(ctx, a) { return readSyllabus(ctx.session.reader('jwfw'), a.lesson, a.maxChars); },

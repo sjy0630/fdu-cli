@@ -1,11 +1,8 @@
 import { OPS } from './ops';
 import { describeOp } from './run';
+import { GROUPS } from './groups';
 
 const LOGIN: Record<string, string> = { uis: '复旦账号', hole: '树洞账号', mail: '学生邮箱', none: '不用' };
-const GROUPS: Record<string, string> = {
-  auth: '账号与环境', cache: '缓存', overview: '汇总', calendar: '日历', elearning: 'eLearning', jw: '教务系统', card: '校园卡', dorm: '宿舍', library: '图书馆',
-  notices: '学校通知', hole: '树洞', danke: '旦克（课程评价）', mail: '学生邮箱',
-};
 
 /** 全部命令的参考文档（skills/fdu-cli/reference.md 由它生成，测试会检查是否最新） */
 export function referenceMarkdown(): string {
@@ -21,11 +18,13 @@ export function referenceMarkdown(): string {
     '只读查询的结果会缓存在本机：加 `--cached` 不联网直接返回上次的结果（带 `cachedAt`）；联网失败时，错误里附上上次的结果 `cached: {at, data}`。',
     '',
   ];
+  // 按分组顺序；没有登记分组的命令放在最后
+  const ordered = [...GROUPS.map((g) => g.id), ...new Set(OPS.map((o) => o.name.split('.')[0]))].filter((g, i, a) => a.indexOf(g) === i);
   let group = '';
-  for (const op of OPS) {
+  for (const op of ordered.flatMap((g) => OPS.filter((o) => o.name.startsWith(`${g}.`)))) {
     const d = describeOp(op);
     const g = op.name.split('.')[0];
-    if (g !== group) { group = g; lines.push(`## ${GROUPS[g] ?? g}`, ''); }
+    if (g !== group) { group = g; const info = GROUPS.find((x) => x.id === g); lines.push(`## ${info?.name ?? g}`, '', ...(info ? [info.desc, ''] : [])); }
     const tags = [`登录：${LOGIN[op.login]}`, op.effect === 'local-write' ? '会写本机文件' : op.effect === 'auth' ? '登录 / 退出' : '只读', op.sensitive ? '**隐私数据**' : '', op.mcp === false ? '仅命令行' : `MCP：\`${d.mcpTool}\``].filter(Boolean);
     lines.push(`### \`${d.command}\``, '', op.summary, '', tags.join(' · '), '');
     if (d.params.length) {

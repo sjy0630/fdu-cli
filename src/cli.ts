@@ -5,6 +5,8 @@ import { Cache } from './core/cache';
 import { serveMcp } from './mcp';
 import { findOp, OPS, type Ctx } from './ops';
 import { camel, describeOp, exitCode, runOp, type Failure } from './run';
+import { helpGroup, helpOp, helpOverview } from './help';
+import { groupOf } from './groups';
 
 declare const __FDU_VERSION__: string;
 const VERSION = typeof __FDU_VERSION__ === 'string' ? __FDU_VERSION__ : '0.0.0-dev';
@@ -58,28 +60,26 @@ function prompt(question: string, opts: { hidden?: boolean } = {}): Promise<stri
   });
 }
 
-const HELP = `fdu ${VERSION} — 复旦校园服务命令行（输出 JSON）
-
-用法：
-  fdu login [--webvpn]            登录复旦统一身份认证（打开浏览器，你自己输入账号密码）
-  fdu status                      各系统的登录状态
-  fdu doctor                      检查环境、网络和登录，给出修复建议
-  fdu today / fdu week            今天 / 这周的课、要交的作业、考试
-  fdu <服务> <操作> [--参数 值]    例如 fdu jw timetable、fdu elearning todo --days 7
-  fdu services                    列出全部操作
-  fdu describe <服务.操作>         查看参数和示例
-  fdu mcp                         以 MCP 服务运行（给 Claude Code、Codex 等用）
-
-通用参数：--compact 紧凑输出；--cached 不联网，返回上次查询的结果；--profile 名称 使用另一套登录状态；--browser 路径 指定浏览器
-服务：auth、overview（汇总）、calendar（导出日历）、elearning、jw（教务）、card、dorm、library、notices、hole（树洞）、danke（旦克）、mail、cache
-`;
-
 async function main(argv: string[]): Promise<number> {
   const { positionals, flags } = parseArgs(argv);
   const print = (v: unknown) => process.stdout.write(`${JSON.stringify(v, null, flags.compact ? 0 : 2)}\n`);
   if (flags.version) { process.stdout.write(`${VERSION}\n`); return 0; }
   const [first] = positionals;
-  if (!first || flags.help && !first || first === 'help') { process.stdout.write(HELP); return 0; }
+  const text = (t: string) => { process.stdout.write(t); return 0; };
+  if (!first) return text(helpOverview(VERSION));
+  if (flags.help && first !== 'help' && !findOp(resolveOpName(positionals).name ?? '') && !groupOf(first)) return text(helpOverview(VERSION));
+  // fdu help、fdu help jw、fdu help jw grades / jw.grades
+  if (first === 'help') {
+    const rest = positionals.slice(1);
+    if (!rest.length) return text(helpOverview(VERSION));
+    const target = rest.length > 1 || rest[0].includes('.') || ALIASES[rest[0]] ? resolveOpName(rest).name : undefined;
+    const op = target ? findOp(target) : undefined;
+    if (op) return text(helpOp(op));
+    const g = helpGroup(rest[0]);
+    if (g && rest.length === 1) return text(g);
+    process.stdout.write(`没有这个命令：${rest.join(' ')}。运行 fdu help 查看全部命令。\n`);
+    return 2;
+  }
   const profile = typeof flags.profile === 'string' ? flags.profile : undefined;
   const browser = typeof flags.browser === 'string' ? flags.browser : undefined;
   if (first === 'mcp') { await serveMcp({ profile, browser }); return -1; }
@@ -96,15 +96,17 @@ async function main(argv: string[]): Promise<number> {
   }
   const { name, rest } = resolveOpName(positionals);
   const op = name ? findOp(name) : undefined;
+  // 只写了服务名（fdu jw）：显示这个服务的命令
+  if (!op && positionals.length === 1 && groupOf(first)) return text(helpGroup(first) ?? helpOverview(VERSION));
   if (!op) {
-    print({ ok: false, error: { code: 'NOT_FOUND', message: `没有这个命令：${positionals.join(' ')}`, hint: '用 `fdu services` 查看全部操作，或 `fdu --help`。' } } satisfies Failure);
+    print({ ok: false, error: { code: 'NOT_FOUND', message: `没有这个命令：${positionals.join(' ')}`, hint: '运行 `fdu help` 查看全部命令（给 AI 看的 JSON 列表：`fdu services`）。' } } satisfies Failure);
     return 2;
   }
   if (rest.length) {
     print({ ok: false, op: op.name, error: { code: 'BAD_ARGS', message: `多余的参数：${rest.join(' ')}`, hint: `参数要写成 --名字 值，用 \`fdu describe ${op.name}\` 查看。` } } satisfies Failure);
     return 2;
   }
-  if (flags.help) { print({ ok: true, data: describeOp(op) }); return 0; }
+  if (flags.help) return text(helpOp(op));
   const store = new Store(profile);
   const session = new Session(store, { browserPath: browser, headed: flags.headed === true });
   const input = Object.fromEntries(Object.entries(flags).filter(([k]) => !GLOBAL.has(k)).map(([k, v]) => [camel(k), v]));

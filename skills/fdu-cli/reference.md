@@ -8,7 +8,43 @@ MCP 工具名是把命令里的点换成下划线，如 `jw.grades` → `jw_grad
 简写：`fdu login` / `logout` / `status` / `doctor` / `today` / `week` / `todo`。
 只读查询的结果会缓存在本机：加 `--cached` 不联网直接返回上次的结果（带 `cachedAt`）；联网失败时，错误里附上上次的结果 `cached: {at, data}`。
 
+## 汇总
+
+今天 / 这周的课、要交的作业、考试（简写 fdu today、fdu week）
+
+### `fdu overview today`
+
+今天的概况：今天的课（按教学周和放假安排筛好）、3 天内要交还没交的作业、7 天内的考试、过了截止还没交的作业。某一类读不到时其他照常返回，读不到的写在 errors 里。
+
+登录：复旦账号 · 只读 · MCP：`overview_today`
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `--date` | string |  | 日期 YYYY-MM-DD，默认今天 |
+
+```bash
+fdu today
+fdu today --date 2026-11-09
+```
+
+### `fdu overview week`
+
+这一周（按校历从周日到周六）每天的课、本周要交的作业、本周的考试，以及第几教学周。
+
+登录：复旦账号 · 只读 · MCP：`overview_week`
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `--date` | string |  | 这一周里的任意一天，默认今天 |
+
+```bash
+fdu week
+fdu week --date 2026-11-16
+```
+
 ## 账号与环境
+
+登录复旦统一身份认证、查看登录状态、检查环境（简写 fdu login、fdu status、fdu doctor）
 
 ### `fdu auth login`
 
@@ -48,87 +84,9 @@ fdu login --webvpn
 fdu doctor
 ```
 
-## dev
-
-### `fdu dev capture`
-
-开发新功能用：打开浏览器（带着复旦账号登录状态），你在里面操作某个学校系统的页面，关掉窗口后把页面用到的接口结构存成文件——只有地址、参数名、返回的字段名和类型、表格列名，不含姓名、学号、金额等任何具体内容，可以直接发给开发者。
-
-登录：不用 · 会写本机文件 · 仅命令行
-
-| 参数 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `--url` | string | 是 | 从哪个页面开始，如 https://fdjwgl.fudan.edu.cn/student/home |
-| `--out` | string |  | 结果保存到哪里，默认当前目录的 fdu-capture-时间.json |
-| `--minutes` | integer |  | 最多录多久（分钟），默认 10 |
-| `--keep-query` | boolean |  | 保留查询参数的值（如翻页参数的格式；令牌和长数字会遮掉，发出前请自己看一遍） |
-| `--html` | string |  | 另外保存地址里包含这段文字的网页的原始 HTML（如 day.asp），IP、令牌、长数字会遮掉 |
-
-```bash
-fdu dev capture --url https://fdjwgl.fudan.edu.cn/student/home
-```
-
-## 缓存
-
-### `fdu cache clear`
-
-删除本机缓存的查询结果（退出登录时也会自动删除）。
-
-登录：不用 · 会写本机文件 · 仅命令行
-
-## 汇总
-
-### `fdu overview today`
-
-今天的概况：今天的课（按教学周和放假安排筛好）、3 天内要交还没交的作业、7 天内的考试、过了截止还没交的作业。某一类读不到时其他照常返回，读不到的写在 errors 里。
-
-登录：复旦账号 · 只读 · MCP：`overview_today`
-
-| 参数 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `--date` | string |  | 日期 YYYY-MM-DD，默认今天 |
-
-```bash
-fdu today
-fdu today --date 2026-11-09
-```
-
-### `fdu overview week`
-
-这一周（按校历从周日到周六）每天的课、本周要交的作业、本周的考试，以及第几教学周。
-
-登录：复旦账号 · 只读 · MCP：`overview_week`
-
-| 参数 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `--date` | string |  | 这一周里的任意一天，默认今天 |
-
-```bash
-fdu week
-fdu week --date 2026-11-16
-```
-
-## 日历
-
-### `fdu calendar export`
-
-把课表、考试和作业截止时间导出成日历文件（.ics），可以导入苹果日历、Outlook、Google 日历。重复导入同一学期会更新已有日程，不会重复添加。
-
-登录：复旦账号 · 会写本机文件 · MCP：`calendar_export`
-
-| 参数 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `--out` | string |  | 保存到哪里，默认当前目录的 fudan.ics |
-| `--include` | string |  | 导出哪些，逗号分隔：timetable,exams,assignments（默认全部） |
-| `--overwrite` | boolean |  | 文件已存在时覆盖（默认另存为新文件名） |
-| `--alarms` | boolean |  | 考试和作业截止前一天提醒（默认开） |
-
-```bash
-fdu calendar export
-fdu calendar export --include timetable,exams --out ~/Desktop/fudan.ics
-```
-
 ## eLearning
+
+课程、作业和截止时间、公告、课件下载（简写 fdu todo）
 
 ### `fdu elearning courses`
 
@@ -200,6 +158,8 @@ fdu elearning files --course 线性代数 --search 第5讲
 | `--out` | string |  | 保存到哪个文件夹，默认当前目录 |
 
 ## 教务系统
+
+课表、考试、成绩绩点、培养方案、选课结果、全校开课查询、教学大纲、教学周
 
 ### `fdu jw semesters`
 
@@ -291,7 +251,7 @@ fdu jw lessons --keyword 数据结构 --syllabus
 
 ### `fdu jw syllabus`
 
-某个教学班的教学大纲（课程目标、内容安排、考核方式、教材等），转成纯文本。教学班 id 来自 fdu jw lessons。
+某个教学班的教学大纲：课程信息、简介、教学目标、每周内容安排、考核方式和权重、教材、教学团队。教学班 id 来自 fdu jw lessons。
 
 登录：复旦账号 · 只读 · MCP：`jw_syllabus`
 
@@ -314,7 +274,9 @@ fdu jw syllabus --lesson 1037803
 |---|---|---|---|
 | `--which` | string |  | current 当前学期（默认）、next 下学期，或学期名关键词 |
 
-## icourse
+## iCourse 课程回放
+
+找课程、讲次列表、课堂文字稿
 
 ### `fdu icourse search`
 
@@ -372,77 +334,9 @@ fdu icourse transcript --course 12345 --lecture 67890
 fdu icourse transcript --course 12345 --lecture 67890 --offset 30000
 ```
 
-## 校园卡
+## 教室
 
-### `fdu card balance`
-
-校园卡余额。
-
-登录：复旦账号 · 只读 · MCP：`card_balance`
-
-### `fdu card transactions`
-
-校园卡消费记录（时间、类型、商户、金额；支出为负）和统计：总支出、充值、日均、按商户和餐次。默认最近 7 天。
-
-登录：复旦账号 · 只读 · **隐私数据** · MCP：`card_transactions`
-
-| 参数 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `--days` | integer |  | 最近几天（含今天），默认 7 |
-| `--from` | string |  | 开始日期 YYYY-MM-DD（和 --days 二选一） |
-| `--to` | string |  | 结束日期，默认今天 |
-| `--limit` | integer |  | 最多返回几条明细，默认 100（统计按全部记录算） |
-| `--merchant` | string |  | 只看商户名包含这个词的，如「食堂」「北区」 |
-
-```bash
-fdu card transactions
-fdu card transactions --days 30 --limit 0
-fdu card transactions --from 2026-10-01 --to 2026-10-31
-```
-
-## venue
-
-### `fdu venue list`
-
-可以预约的体育场馆（id、名称），如「北区体育馆-羽毛球」。
-
-登录：复旦账号 · 只读 · MCP：`venue_list`
-
-### `fdu venue free`
-
-体育场馆的空闲时段：每个时段还有哪些场地空着（只看，不预约）。场馆可以写 id 或名称关键词（如「北区 羽毛球」）。
-
-登录：复旦账号 · 只读 · MCP：`venue_free`
-
-| 参数 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `--venue` | string | 是 | 场馆 id 或名称关键词，多个词用空格分开 |
-| `--date` | string |  | 日期 YYYY-MM-DD，默认今天 |
-| `--days` | integer |  | 连看几天，默认 1 |
-| `--all` | boolean |  | 也列出已经约满的时段 |
-
-```bash
-fdu venue free --venue "北区 羽毛球"
-fdu venue free --venue 正大 --date 2026-11-10 --days 3
-```
-
-## 宿舍
-
-### `fdu dorm electricity`
-
-宿舍剩余电量（度）。
-
-登录：复旦账号 · 只读 · MCP：`dorm_electricity`
-
-## 图书馆
-
-### `fdu library seats`
-
-各图书馆在馆人数和还能进多少人（公开接口，不用登录）。
-
-登录：不用 · 只读 · MCP：`library_seats`
-
-## rooms
+各教学楼每间教室的安排、空闲时段、现在的状态（经 WebVPN）
 
 ### `fdu rooms login`
 
@@ -488,7 +382,45 @@ fdu rooms day --building H3,HGX --date 2026-11-10
 fdu rooms day --brief
 ```
 
+## 校园卡
+
+余额、消费记录和统计
+
+### `fdu card balance`
+
+校园卡余额。
+
+登录：复旦账号 · 只读 · MCP：`card_balance`
+
+### `fdu card transactions`
+
+校园卡消费记录（时间、类型、商户、金额；支出为负）和统计：总支出、充值、日均、按商户和餐次。默认最近 7 天。
+
+登录：复旦账号 · 只读 · **隐私数据** · MCP：`card_transactions`
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `--days` | integer |  | 最近几天（含今天），默认 7 |
+| `--from` | string |  | 开始日期 YYYY-MM-DD（和 --days 二选一） |
+| `--to` | string |  | 结束日期，默认今天 |
+| `--limit` | integer |  | 最多返回几条明细，默认 100（统计按全部记录算） |
+| `--merchant` | string |  | 只看商户名包含这个词的，如「食堂」「北区」 |
+
+```bash
+fdu card transactions
+fdu card transactions --days 30 --limit 0
+fdu card transactions --from 2026-10-01 --to 2026-10-31
+```
+
 ## 图书馆
+
+在馆人数、文献检索、在借的书和借阅历史
+
+### `fdu library seats`
+
+各图书馆在馆人数和还能进多少人（公开接口，不用登录）。
+
+登录：不用 · 只读 · MCP：`library_seats`
 
 ### `fdu library login`
 
@@ -541,6 +473,8 @@ fdu library search --query "graph neural network molecule" --year-from 2022
 
 ## 学校通知
 
+教务处、研究生院、各院系官网的通知
+
 ### `fdu notices sources`
 
 内置的学校部门和院系官网通知来源（id、名称、网址）。
@@ -572,7 +506,47 @@ fdu notices list --source 教务处
 |---|---|---|---|
 | `--url` | string | 是 | 通知链接（来自 notices list） |
 
+## 体育场馆
+
+各场馆每个时段还有哪些场地空着（只看，不预约）
+
+### `fdu venue list`
+
+可以预约的体育场馆（id、名称），如「北区体育馆-羽毛球」。
+
+登录：复旦账号 · 只读 · MCP：`venue_list`
+
+### `fdu venue free`
+
+体育场馆的空闲时段：每个时段还有哪些场地空着（只看，不预约）。场馆可以写 id 或名称关键词（如「北区 羽毛球」）。
+
+登录：复旦账号 · 只读 · MCP：`venue_free`
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `--venue` | string | 是 | 场馆 id 或名称关键词，多个词用空格分开 |
+| `--date` | string |  | 日期 YYYY-MM-DD，默认今天 |
+| `--days` | integer |  | 连看几天，默认 1 |
+| `--all` | boolean |  | 也列出已经约满的时段 |
+
+```bash
+fdu venue free --venue "北区 羽毛球"
+fdu venue free --venue 正大 --date 2026-11-10 --days 3
+```
+
+## 宿舍
+
+剩余电量
+
+### `fdu dorm electricity`
+
+宿舍剩余电量（度）。
+
+登录：复旦账号 · 只读 · MCP：`dorm_electricity`
+
 ## 树洞
+
+搜索和阅读树洞帖子（需要树洞账号）
 
 ### `fdu hole login`
 
@@ -626,7 +600,9 @@ fdu notices list --source 教务处
 | `--length` | integer |  | 几条，默认 10 |
 | `--tag` | string |  | 标签 |
 
-## 旦克（课程评价）
+## 旦克
+
+课程评价（需要树洞账号）
 
 ### `fdu danke search`
 
@@ -651,6 +627,8 @@ fdu notices list --source 教务处
 | `--max` | integer |  | 最多几条评价，默认 12 |
 
 ## 学生邮箱
+
+收件箱（IMAP 只读，需要客户端专用密码）
 
 ### `fdu mail setup`
 
@@ -692,3 +670,57 @@ fdu notices list --source 教务处
 |---|---|---|---|
 | `--uid` | string | 是 |  |
 | `--days` | integer |  | 在最近几天里找，默认 30 |
+
+## 日历
+
+把课表、考试、作业截止导出成 .ics
+
+### `fdu calendar export`
+
+把课表、考试和作业截止时间导出成日历文件（.ics），可以导入苹果日历、Outlook、Google 日历。重复导入同一学期会更新已有日程，不会重复添加。
+
+登录：复旦账号 · 会写本机文件 · MCP：`calendar_export`
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `--out` | string |  | 保存到哪里，默认当前目录的 fudan.ics |
+| `--include` | string |  | 导出哪些，逗号分隔：timetable,exams,assignments（默认全部） |
+| `--overwrite` | boolean |  | 文件已存在时覆盖（默认另存为新文件名） |
+| `--alarms` | boolean |  | 考试和作业截止前一天提醒（默认开） |
+
+```bash
+fdu calendar export
+fdu calendar export --include timetable,exams --out ~/Desktop/fudan.ics
+```
+
+## 缓存
+
+本机缓存的查询结果
+
+### `fdu cache clear`
+
+删除本机缓存的查询结果（退出登录时也会自动删除）。
+
+登录：不用 · 会写本机文件 · 仅命令行
+
+## 开发
+
+录制学校系统页面用到的接口结构（接入新系统时用）
+
+### `fdu dev capture`
+
+开发新功能用：打开浏览器（带着复旦账号登录状态），你在里面操作某个学校系统的页面，关掉窗口后把页面用到的接口结构存成文件——只有地址、参数名、返回的字段名和类型、表格列名，不含姓名、学号、金额等任何具体内容，可以直接发给开发者。
+
+登录：不用 · 会写本机文件 · 仅命令行
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `--url` | string | 是 | 从哪个页面开始，如 https://fdjwgl.fudan.edu.cn/student/home |
+| `--out` | string |  | 结果保存到哪里，默认当前目录的 fdu-capture-时间.json |
+| `--minutes` | integer |  | 最多录多久（分钟），默认 10 |
+| `--keep-query` | boolean |  | 保留查询参数的值（如翻页参数的格式；令牌和长数字会遮掉，发出前请自己看一遍） |
+| `--html` | string |  | 另外保存地址里包含这段文字的网页的原始 HTML（如 day.asp），IP、令牌、长数字会遮掉 |
+
+```bash
+fdu dev capture --url https://fdjwgl.fudan.edu.cn/student/home
+```
