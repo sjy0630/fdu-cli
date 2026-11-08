@@ -148,6 +148,16 @@ export async function login(session: Session, opts: { webvpn?: boolean; timeoutM
       if (jwfw !== 'ok') await new Promise((r) => setTimeout(r, 1500));
     }
   }
+  // eLearning 自己的会话比统一身份认证活得久：它还在、但教务系统的单点登录走不通，
+  // 说明统一身份认证已经过期，打开浏览器重新登录（登录后会直接回到教务系统）
+  if (jwfw === 'need_login' && existing) {
+    opts.onWaiting?.('统一身份认证已过期，已打开浏览器，请在学校的登录页面里重新登录（最长等待 5 分钟）……');
+    await session.withPage(JW_HOME, (page) => {
+      const u = new URL(page.url());
+      return u.hostname === 'fdjwgl.fudan.edu.cn' && u.pathname.startsWith('/student/home');
+    }, { headless: false, timeoutMs: opts.timeoutMs ?? 300_000, platform: 'jwfw' }).catch(() => undefined);
+    jwfw = await platformStatus(session, 'jwfw');
+  }
   let webvpn: boolean | undefined;
   if (opts.webvpn) {
     await ensureWebvpn(session, { headless: false });

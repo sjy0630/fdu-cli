@@ -34,6 +34,14 @@ describe('食堂人数', () => {
     expect(() => parseCanteen('<html><body>维护中</body></html>')).toThrow('页面可能更新了');
   });
 
+  it('后台请求被带到统一身份认证时，交给浏览器走完单点登录；浏览器也登不上时报需要登录', async () => {
+    const toUis = async (): Promise<never> => { throw new NeedLoginError('jwfw'); };
+    const r = await readCanteen({ getText: toUis, render: async () => page("['江湾食堂'];['20'];['80']") });
+    expect(r.campuses[0]).toMatchObject({ campus: '邯郸', canteens: [{ name: '江湾食堂', current: 20 }] });
+    await expect(readCanteen({ getText: toUis, render: async () => { throw new NeedLoginError('jwfw'); } })).rejects.toBeInstanceOf(NeedLoginError);
+    await expect(readCanteen({ getText: toUis })).rejects.toBeInstanceOf(NeedLoginError);
+  });
+
   it('后台请求拿不到数据时用浏览器渲染', async () => {
     const rendered: string[] = [];
     const r = await readCanteen({
@@ -82,5 +90,18 @@ describe('校车', () => {
     expect(calls[0].url).toContain('/sso/');
     expect(calls[1]).toEqual({ url: expect.stringContaining('/fudanbus/'), body: 'holiday=1' });
     await expect(readBus({ getText: async (url) => ({ url: 'https://zlapp.fudan.edu.cn/uc/wap/login', status: 200, text: '<html>登录</html>' }) }, false)).rejects.toBeInstanceOf(NeedLoginError);
+  });
+
+  it('后台请求被带到统一身份认证时，用浏览器走完单点登录再读', async () => {
+    let session = false;
+    const trips = await readBus({
+      getText: async (url) => {
+        if (url.includes('/sso/')) throw new NeedLoginError('jwfw');
+        if (!session) throw new NeedLoginError('jwfw');
+        return { url, status: 200, text: busBody };
+      },
+      render: async (_url, ready) => { session = ready('', 'https://zlapp.fudan.edu.cn/site/home'); return ''; },
+    }, false);
+    expect(trips).toHaveLength(4);
   });
 });

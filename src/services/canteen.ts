@@ -1,4 +1,5 @@
 import type { CampusReader } from '../core/types';
+import { NeedLoginError } from '../core/fudan-auth';
 
 /**
  * 食堂实时人数（my.fudan.edu.cn 的「食堂情况」，复用统一身份认证会话，只读）。
@@ -60,8 +61,16 @@ export function parseCanteen(html: string): CanteenCrowd {
 }
 
 export async function readCanteen(reader: CampusReader): Promise<CanteenCrowd> {
-  const ready = (html: string) => /<script[^>]*>[\s\S]*\[[\s\S]*\]/.test(html) || /仅/.test(text(html));
-  let html = (await reader.getText(CANTEEN_URL)).text;
+  // 能解析出人数或「不在用餐时段」的说明才算加载好（中间跳转页的脚本里也可能有数组）
+  const ready = (html: string) => { try { parseCanteen(html); return true; } catch { return false; } };
+  let html = '';
+  try {
+    html = (await reader.getText(CANTEEN_URL)).text;
+  } catch (e) {
+    // 单点登录的最后一步靠页面脚本，后台请求会停在统一身份认证；交给浏览器走完
+    // （统一身份认证真的过期时，浏览器也会停在登录页，照样报需要登录）
+    if (!(e instanceof NeedLoginError) || !reader.render) throw e;
+  }
   if (!ready(html) && reader.render) html = await reader.render(CANTEEN_URL, ready);
   return parseCanteen(html);
 }

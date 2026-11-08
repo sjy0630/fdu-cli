@@ -598,6 +598,14 @@ async function login(session, opts = {}) {
       if (jwfw !== "ok") await new Promise((r) => setTimeout(r, 1500));
     }
   }
+  if (jwfw === "need_login" && existing) {
+    opts.onWaiting?.("\u7EDF\u4E00\u8EAB\u4EFD\u8BA4\u8BC1\u5DF2\u8FC7\u671F\uFF0C\u5DF2\u6253\u5F00\u6D4F\u89C8\u5668\uFF0C\u8BF7\u5728\u5B66\u6821\u7684\u767B\u5F55\u9875\u9762\u91CC\u91CD\u65B0\u767B\u5F55\uFF08\u6700\u957F\u7B49\u5F85 5 \u5206\u949F\uFF09\u2026\u2026");
+    await session.withPage(JW_HOME, (page) => {
+      const u = new URL(page.url());
+      return u.hostname === "fdjwgl.fudan.edu.cn" && u.pathname.startsWith("/student/home");
+    }, { headless: false, timeoutMs: opts.timeoutMs ?? 3e5, platform: "jwfw" }).catch(() => void 0);
+    jwfw = await platformStatus(session, "jwfw");
+  }
   let webvpn;
   if (opts.webvpn) {
     await ensureWebvpn(session, { headless: false });
@@ -971,7 +979,15 @@ function parseElectricity(body3) {
 async function readZlapp(reader, url, init) {
   const notLoggedIn = (r) => /\/uc\/wap\/login/.test(r.url) || /<html/i.test(r.text.slice(0, 300));
   await reader.getText(ZLAPP_SSO).catch(() => void 0);
-  let res = await reader.getText(url, init);
+  const get = async () => {
+    try {
+      return await reader.getText(url, init);
+    } catch (e) {
+      if (e instanceof NeedLoginError && reader.render) return { url, status: 401, text: "<html>" };
+      throw e;
+    }
+  };
+  let res = await get();
   if (notLoggedIn(res) && reader.render) {
     await reader.render(ZLAPP_SSO, (_html, u) => {
       try {
@@ -981,7 +997,7 @@ async function readZlapp(reader, url, init) {
         return false;
       }
     });
-    res = await reader.getText(url, init);
+    res = await get();
   }
   if (notLoggedIn(res)) throw new NeedLoginError("jwfw");
   return res.text;
@@ -1080,8 +1096,20 @@ function parseCanteen(html) {
   throw new Error("\u6CA1\u6709\u5728\u98DF\u5802\u60C5\u51B5\u9875\u9762\u4E0A\u627E\u5230\u4EBA\u6570\u6570\u636E\uFF0C\u5B66\u6821\u9875\u9762\u53EF\u80FD\u66F4\u65B0\u4E86\u3002");
 }
 async function readCanteen(reader) {
-  const ready = (html2) => /<script[^>]*>[\s\S]*\[[\s\S]*\]/.test(html2) || /仅/.test(text(html2));
-  let html = (await reader.getText(CANTEEN_URL)).text;
+  const ready = (html2) => {
+    try {
+      parseCanteen(html2);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  let html = "";
+  try {
+    html = (await reader.getText(CANTEEN_URL)).text;
+  } catch (e) {
+    if (!(e instanceof NeedLoginError) || !reader.render) throw e;
+  }
   if (!ready(html) && reader.render) html = await reader.render(CANTEEN_URL, ready);
   return parseCanteen(html);
 }

@@ -33,7 +33,14 @@ export function parseElectricity(body: string): DormElectricity {
 export async function readZlapp(reader: CampusReader, url: string, init?: Parameters<CampusReader['getText']>[1]): Promise<string> {
   const notLoggedIn = (r: { url: string; text: string }) => /\/uc\/wap\/login/.test(r.url) || /<html/i.test(r.text.slice(0, 300));
   await reader.getText(ZLAPP_SSO).catch(() => undefined);
-  let res = await reader.getText(url, init);
+  const get = async () => {
+    try { return await reader.getText(url, init); } catch (e) {
+      // 被带到统一身份认证：可能只是单点登录要靠页面脚本走完，下面交给浏览器
+      if (e instanceof NeedLoginError && reader.render) return { url, status: 401, text: '<html>' };
+      throw e;
+    }
+  };
+  let res = await get();
   if (notLoggedIn(res) && reader.render) {
     await reader.render(ZLAPP_SSO, (_html, u) => {
       try {
@@ -41,7 +48,7 @@ export async function readZlapp(reader: CampusReader, url: string, init?: Parame
         return x.hostname === 'zlapp.fudan.edu.cn' && !x.pathname.includes('/uc/wap/login') && !x.pathname.includes('/sso/');
       } catch { return false; }
     });
-    res = await reader.getText(url, init);
+    res = await get();
   }
   // 还是被带到它自己的登录页：复旦账号登录过期
   if (notLoggedIn(res)) throw new NeedLoginError('jwfw');
