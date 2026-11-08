@@ -1,5 +1,11 @@
 # fdu-cli（`fdu`）
 
+[![GitHub stars](https://img.shields.io/github/stars/sjy0630/fdu-cli?style=flat&logo=github)](https://github.com/sjy0630/fdu-cli/stargazers)
+[![npm version](https://img.shields.io/npm/v/fdu-cli?logo=npm)](https://www.npmjs.com/package/fdu-cli)
+[![npm downloads](https://img.shields.io/npm/dm/fdu-cli)](https://www.npmjs.com/package/fdu-cli)
+[![CI](https://github.com/sjy0630/fdu-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/sjy0630/fdu-cli/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 复旦校园服务的命令行和 MCP 服务，给 **Claude Code、Codex** 等 AI 助理用：让它直接查你的课表、作业 DDL、考试、成绩，找空教室、看课程回放文字稿、读教学大纲，查图书馆借阅和校园卡消费，然后替你安排和提建议。
 
 所有命令输出 JSON，对学校系统**全部只读**：不提交作业、不选课、不预约、不续借、不发帖、不发邮件。
@@ -170,6 +176,10 @@ npm run docs                 # 改了命令后重新生成命令参考
 
 - 本项目与复旦大学官方无关。学校系统随时可能改版。
 - 部分接口地址参考了社区项目（如旦挞 / DanXi、ehall、FudanCourtReservation、fudan-library-mcp）公开的接口信息。
+
+## Star 趋势
+
+[![Star History Chart](https://api.star-history.com/svg?repos=sjy0630/fdu-cli&type=Date)](https://star-history.com/#sjy0630/fdu-cli&Date)
 
 ## 许可
 
