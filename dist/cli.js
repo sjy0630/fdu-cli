@@ -70,7 +70,11 @@ function toFduError(e) {
 
 // src/core/session.ts
 var STATE = "state.json";
-var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 fdu-cli";
+function userAgent(platform = process.platform) {
+  const os = platform === "darwin" ? "Macintosh; Intel Mac OS X 10_15_7" : platform === "win32" ? "Windows NT 10.0; Win64; x64" : "X11; Linux x86_64";
+  return `Mozilla/5.0 (${os}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36`;
+}
+var UA = userAgent();
 var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function proxyFromEnv(env = process.env) {
   const server = env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy;
@@ -90,6 +94,8 @@ var Session = class {
   dirty = false;
   /** 这次运行里在浏览器里拿到过 Cookie（登录过程中，还没写到 state.json） */
   fromBrowser = false;
+  /** 浏览器最后停在的地址（排查登录问题用，只取路径） */
+  lastUrl = "";
   hasState() {
     return !!this.store.readJson(STATE);
   }
@@ -161,7 +167,7 @@ var Session = class {
    */
   async withPage(url, done, opts) {
     const browser = opts.headless ? this.browser ??= await this.launch(true) : await this.launch(false);
-    const context = await browser.newContext({ storageState: await this.state(), proxy: proxyFromEnv(), userAgent: opts.headless ? UA : void 0, viewport: opts.headless ? { width: 1280, height: 900 } : null });
+    const context = await browser.newContext({ storageState: await this.state(), proxy: proxyFromEnv(), userAgent: UA, viewport: opts.headless ? { width: 1280, height: 900 } : null });
     try {
       const page = await context.newPage();
       context.on("page", (p) => {
@@ -185,6 +191,7 @@ var Session = class {
           for (const f of document.querySelectorAll('iframe')) { try { if (f.contentDocument) parts.push(f.contentDocument.documentElement.outerHTML); } catch {} }
           return parts.join('\\n');
         })()`).then((v) => String(v ?? "")).catch(() => "");
+        this.lastUrl = page.url();
         if (await done(page, html)) break;
       }
       const state = await context.storageState();
@@ -207,7 +214,7 @@ var Session = class {
    */
   async record(url, onResponse, timeoutMs = 6e5) {
     const browser = await this.launch(false);
-    const context = await browser.newContext({ storageState: await this.state(), proxy: proxyFromEnv(), viewport: null });
+    const context = await browser.newContext({ storageState: await this.state(), proxy: proxyFromEnv(), userAgent: UA, viewport: null });
     const pending = [];
     context.on("response", (res) => {
       const req = res.request();
@@ -452,14 +459,26 @@ async function platformStatus(session, platform) {
     return "unavailable";
   }
 }
-async function webvpnAlive(session) {
+var where = (url) => {
+  try {
+    const u = new URL(url);
+    return `${u.origin}${u.pathname}`;
+  } catch {
+    return url.slice(0, 60);
+  }
+};
+async function webvpnCheck(session) {
   try {
     const r = await session.raw(WEBVPN_HOME, { timeoutMs: 15e3 });
     const u = new URL(r.url);
-    return r.status < 400 && u.hostname === "webvpn.fudan.edu.cn" && !u.pathname.startsWith("/login");
-  } catch {
-    return false;
+    const alive = r.status < 400 && u.hostname === "webvpn.fudan.edu.cn" && !u.pathname.startsWith("/login");
+    return { alive, detail: `HTTP ${r.status}\uFF0C${where(r.url)}` };
+  } catch (e) {
+    return { alive: false, detail: `\u8FDE\u4E0D\u4E0A\uFF1A${String(e.message ?? e).split("\n")[0].slice(0, 80)}` };
   }
+}
+async function webvpnAlive(session) {
+  return (await webvpnCheck(session)).alive;
 }
 async function ensureWebvpn(session, opts = {}) {
   if (await webvpnAlive(session)) return;
@@ -468,8 +487,9 @@ async function ensureWebvpn(session, opts = {}) {
     const u = new URL(page.url());
     return u.hostname === "webvpn.fudan.edu.cn" && !u.pathname.startsWith("/login");
   }, { headless, timeoutMs: headless ? 3e4 : 3e5, stuckOnUisMs: 6e3 });
-  if (!await webvpnAlive(session)) {
-    throw new FduError("NEED_LOGIN", "\u6CA1\u80FD\u5EFA\u7ACB WebVPN \u4F1A\u8BDD\u3002", "\u8FD0\u884C `fdu login --webvpn`\uFF0C\u5728\u6D4F\u89C8\u5668\u91CC\u5B8C\u6210\u767B\u5F55\u3002");
+  const check = await webvpnCheck(session);
+  if (!check.alive) {
+    throw new FduError("NEED_LOGIN", `\u6CA1\u80FD\u5EFA\u7ACB WebVPN \u4F1A\u8BDD\uFF08\u6D4F\u89C8\u5668\u505C\u5728 ${where(session.lastUrl) || "\u672A\u77E5"}\uFF1B\u68C0\u67E5\u7ED3\u679C\uFF1A${check.detail}\uFF09\u3002`, "\u8FD0\u884C `fdu login --webvpn`\uFF0C\u5728\u6D4F\u89C8\u5668\u91CC\u5B8C\u6210\u767B\u5F55\uFF1B\u8FD8\u662F\u4E0D\u884C\u8BF7\u628A\u8FD9\u6761\u4FE1\u606F\u53D1\u7ED9\u5F00\u53D1\u8005\u3002");
   }
 }
 async function login(session, opts = {}) {

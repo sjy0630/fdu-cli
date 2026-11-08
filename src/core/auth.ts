@@ -57,12 +57,20 @@ export async function platformStatus(session: Session, platform: FudanPlatform):
   } catch { return 'unavailable'; }
 }
 
-export async function webvpnAlive(session: Session): Promise<boolean> {
+/** 只留协议、主机和路径，去掉参数（里面可能有票据） */
+const where = (url: string) => { try { const u = new URL(url); return `${u.origin}${u.pathname}`; } catch { return url.slice(0, 60); } };
+
+export async function webvpnCheck(session: Session): Promise<{ alive: boolean; detail: string }> {
   try {
     const r = await session.raw(WEBVPN_HOME, { timeoutMs: 15_000 });
     const u = new URL(r.url);
-    return r.status < 400 && u.hostname === 'webvpn.fudan.edu.cn' && !u.pathname.startsWith('/login');
-  } catch { return false; }
+    const alive = r.status < 400 && u.hostname === 'webvpn.fudan.edu.cn' && !u.pathname.startsWith('/login');
+    return { alive, detail: `HTTP ${r.status}，${where(r.url)}` };
+  } catch (e) { return { alive: false, detail: `连不上：${String((e as Error).message ?? e).split('\n')[0].slice(0, 80)}` }; }
+}
+
+export async function webvpnAlive(session: Session): Promise<boolean> {
+  return (await webvpnCheck(session)).alive;
 }
 
 /**
@@ -77,8 +85,10 @@ export async function ensureWebvpn(session: Session, opts: { headless?: boolean 
     const u = new URL(page.url());
     return u.hostname === 'webvpn.fudan.edu.cn' && !u.pathname.startsWith('/login');
   }, { headless, timeoutMs: headless ? 30_000 : 300_000, stuckOnUisMs: 6000 });
-  if (!(await webvpnAlive(session))) {
-    throw new FduError('NEED_LOGIN', '没能建立 WebVPN 会话。', '运行 `fdu login --webvpn`，在浏览器里完成登录。');
+  const check = await webvpnCheck(session);
+  if (!check.alive) {
+    // 写清楚卡在哪一步：浏览器最后停在哪、登录后检查时被带到了哪（只有路径，没有参数）
+    throw new FduError('NEED_LOGIN', `没能建立 WebVPN 会话（浏览器停在 ${where(session.lastUrl) || '未知'}；检查结果：${check.detail}）。`, '运行 `fdu login --webvpn`，在浏览器里完成登录；还是不行请把这条信息发给开发者。');
   }
 }
 

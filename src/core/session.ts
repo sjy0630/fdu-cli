@@ -9,7 +9,15 @@ export interface RawResponse { status: number; url: string; contentType: string;
 export interface FetchInit { method?: string; headers?: Record<string, string>; body?: string; timeoutMs?: number }
 
 const STATE = 'state.json';
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 fdu-cli';
+/**
+ * 浏览器标识：后台请求、无界面浏览器、有界面浏览器都用同一个，并且和你的系统一致。
+ * 有的系统（如 WebVPN）会把会话和浏览器标识绑在一起，标识对不上就要求重新登录。
+ */
+export function userAgent(platform: string = process.platform): string {
+  const os = platform === 'darwin' ? 'Macintosh; Intel Mac OS X 10_15_7' : platform === 'win32' ? 'Windows NT 10.0; Win64; x64' : 'X11; Linux x86_64';
+  return `Mozilla/5.0 (${os}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36`;
+}
+const UA = userAgent();
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** 设置了 HTTPS_PROXY / HTTP_PROXY 时走代理（公司 / 实验室网络），NO_PROXY 里的地址直连 */
@@ -35,6 +43,8 @@ export class Session {
   private dirty = false;
   /** 这次运行里在浏览器里拿到过 Cookie（登录过程中，还没写到 state.json） */
   private fromBrowser = false;
+  /** 浏览器最后停在的地址（排查登录问题用，只取路径） */
+  lastUrl = '';
 
   constructor(private readonly store: Store, private readonly opts: { browserPath?: string; headed?: boolean } = {}) {}
 
@@ -100,7 +110,7 @@ export class Session {
    */
   async withPage(url: string, done: (page: Page, html: string) => Promise<boolean> | boolean, opts: { headless: boolean; timeoutMs: number; stuckOnUisMs?: number; platform?: FudanPlatform }): Promise<string> {
     const browser = opts.headless ? (this.browser ??= await this.launch(true)) : await this.launch(false);
-    const context = await browser.newContext({ storageState: await this.state(), proxy: proxyFromEnv(), userAgent: opts.headless ? UA : undefined, viewport: opts.headless ? { width: 1280, height: 900 } : null });
+    const context = await browser.newContext({ storageState: await this.state(), proxy: proxyFromEnv(), userAgent: UA, viewport: opts.headless ? { width: 1280, height: 900 } : null });
     try {
       const page = await context.newPage();
       // 不允许页面弹出新窗口
@@ -124,6 +134,7 @@ export class Session {
           for (const f of document.querySelectorAll('iframe')) { try { if (f.contentDocument) parts.push(f.contentDocument.documentElement.outerHTML); } catch {} }
           return parts.join('\\n');
         })()`).then((v) => String(v ?? '')).catch(() => '');
+        this.lastUrl = page.url();
         if (await done(page, html)) break;
       }
       // 浏览器里拿到的新 Cookie 写回会话
@@ -147,7 +158,7 @@ export class Session {
    */
   async record(url: string, onResponse: (r: { method: string; url: string; status: number; contentType: string; resourceType: string; body: () => Promise<string>; postData?: string; requestHeaders: Record<string, string> }) => Promise<void>, timeoutMs = 600_000): Promise<void> {
     const browser = await this.launch(false);
-    const context = await browser.newContext({ storageState: await this.state(), proxy: proxyFromEnv(), viewport: null });
+    const context = await browser.newContext({ storageState: await this.state(), proxy: proxyFromEnv(), userAgent: UA, viewport: null });
     const pending: Promise<void>[] = [];
     context.on('response', (res) => {
       const req = res.request();

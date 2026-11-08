@@ -195,3 +195,12 @@ describe('文档', () => {
     expect(readFileSync(new URL('../skills/fdu-cli/reference.md', import.meta.url), 'utf8').replace(/\r\n/g, '\n')).toBe(referenceMarkdown());
   });
 });
+
+describe('浏览器标识', () => {
+  it('和系统一致，不带额外标记（有的系统把会话和浏览器标识绑在一起）', async () => {
+    const { userAgent } = await import('../src/core/session');
+    expect(userAgent('darwin')).toContain('Macintosh');
+    expect(userAgent('win32')).toContain('Windows NT 10.0');
+    expect(userAgent('linux')).not.toMatch(/fdu/i);
+  });
+});
