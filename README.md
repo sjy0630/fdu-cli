@@ -9,7 +9,7 @@
 需要 Node.js 20 或更新版本，以及 Chrome 或 Edge 浏览器（登录和部分页面要用）。
 
 ```bash
-npm install -g https://github.com/sjy0630/fdu-cli/releases/latest/download/fdu-cli.tgz
+npm install -g fdu-cli
 ```
 
 ```bash
@@ -18,6 +18,8 @@ fdu login         # 打开浏览器，在学校的登录页里登录（一次即
 fdu today         # 今天的课、快到期的作业、考试
 fdu help          # 全部命令
 ```
+
+以后更新也是这条命令（或 `npm update -g fdu-cli`）。连不上 npm 时，可以装 GitHub 发布页上的安装包：`npm install -g https://github.com/sjy0630/fdu-cli/releases/latest/download/fdu-cli.tgz`。
 
 想从源码安装（或者跟着最新代码）：
 
@@ -71,7 +73,7 @@ args = ["mcp"]
 | 学校通知 | `fdu notices sources / list / read` | 教务处、研究生院、各院系官网的通知 | 不用 |
 | 体育场馆 | `fdu venue list / free` | 各场馆每个时段还有哪些场地空着 | 复旦账号 |
 | 宿舍 | `fdu dorm electricity` | 剩余电量 | 复旦账号 |
-| 树洞、旦克 | `fdu hole search / read / latest`、`fdu danke search / reviews` | 树洞帖子、课程评价 | 树洞账号 |
+| 树洞、蛋壳课评 | `fdu hole search / read / latest`、`fdu danke search / reviews` | 树洞（旦挞茶楼）帖子；蛋壳课评（danke.fduhole.com）的课程评分和评价 | 树洞账号 |
 | 学生邮箱 | `fdu mail list / read` | 收件箱（只读，不改已读状态） | 客户端专用密码 |
 | 日历 | `fdu calendar export` | 课表、考试、作业截止导出成 .ics，导入苹果日历 / Outlook / Google 日历 | 复旦账号 |
 
@@ -85,7 +87,7 @@ args = ["mcp"]
 | WebVPN | `fdu login --webvpn` | 校外访问内网系统（树洞、教室、iCourse）用；需要时一般会自动建立 |
 | 教室系统 | `fdu rooms login` | 学校多媒体教室的「在线课表」要单独登录一次 |
 | 图书馆借阅 | `fdu library login` | 在打开的图书馆页面里点「登录」，进「我的借阅」后窗口自动关闭 |
-| 树洞 / 旦克 | `fdu hole login --email 学号@m.fudan.edu.cn` | 密码只用来换令牌，不保存 |
+| 树洞 / 蛋壳课评 | `fdu hole login --email 学号@m.fudan.edu.cn` | 密码只用来换令牌，不保存 |
 | 学生邮箱 | `fdu mail setup --user 学号@m.fudan.edu.cn` | 网页邮箱里生成的客户端专用密码（明文保存在本机） |
 
 `fdu status` 看各账号的状态；登录过期时命令会返回 `NEED_LOGIN`，照提示重新登录即可。

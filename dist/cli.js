@@ -2246,7 +2246,7 @@ var TreeholeClient = class {
     const d = await this.get(`${FORUM}/divisions`);
     return (Array.isArray(d) ? d : []).map((x) => ({ division_id: x.division_id, name: x.name, description: clean2(x.description, 80) }));
   }
-  // ---------- 旦克课程评价 ----------
+  // ---------- 蛋壳课评 ----------
   async searchCourses(keyword, limit = 10) {
     const r = await this.get(`${DANKE}/v3/course_groups/search`, { query: keyword, page: 1, page_size: Math.min(20, limit) });
     const items = Array.isArray(r) ? r : r.items ?? [];
@@ -2574,7 +2574,7 @@ async function runDoctor(d) {
   } catch (e) {
     checks.push({ name: "\u590D\u65E6\u8D26\u53F7", status: "warn", detail: `\u67E5\u4E0D\u5230\u767B\u5F55\u72B6\u6001\uFF1A${String(e.message ?? e).slice(0, 120)}` });
   }
-  checks.push(d.treehole ? { name: "\u6811\u6D1E\u8D26\u53F7", status: "ok", detail: "\u5DF2\u767B\u5F55" } : { name: "\u6811\u6D1E\u8D26\u53F7", status: "warn", detail: "\u6CA1\u6709\u767B\u5F55\uFF08\u4E0D\u7528\u6811\u6D1E\u3001\u65E6\u514B\u53EF\u4EE5\u5FFD\u7565\uFF09", fix: "fdu hole login --email \u5B66\u53F7@m.fudan.edu.cn" });
+  checks.push(d.treehole ? { name: "\u6811\u6D1E\u8D26\u53F7", status: "ok", detail: "\u5DF2\u767B\u5F55" } : { name: "\u6811\u6D1E\u8D26\u53F7", status: "warn", detail: "\u6CA1\u6709\u767B\u5F55\uFF08\u4E0D\u7528\u6811\u6D1E\u3001\u86CB\u58F3\u8BFE\u8BC4\u53EF\u4EE5\u5FFD\u7565\uFF09", fix: "fdu hole login --email \u5B66\u53F7@m.fudan.edu.cn" });
   checks.push(d.mail ? { name: "\u5B66\u751F\u90AE\u7BB1", status: "ok", detail: "\u5DF2\u914D\u7F6E" } : { name: "\u5B66\u751F\u90AE\u7BB1", status: "warn", detail: "\u6CA1\u6709\u914D\u7F6E\uFF08\u4E0D\u67E5\u90AE\u4EF6\u53EF\u4EE5\u5FFD\u7565\uFF09", fix: "fdu mail setup --user \u5B66\u53F7@m.fudan.edu.cn" });
   return { healthy: !checks.some((c) => c.status === "fail"), checks };
 }
@@ -4343,7 +4343,7 @@ var OPS = [
       return { url: page.url, ...d, text: d.text.slice(0, 2e4) };
     }
   }),
-  // ======================= 树洞与旦克 =======================
+  // ======================= 树洞与蛋壳课评 =======================
   op({
     name: "hole.login",
     summary: "\u767B\u5F55\u6811\u6D1E\uFF08\u65E6\u631E\uFF09\u8D26\u53F7\uFF1A\u5BC6\u7801\u53EA\u7528\u6765\u6362\u53D6\u4EE4\u724C\uFF0C\u4E0D\u4FDD\u5B58\u3002\u6821\u5916\u4F1A\u81EA\u52A8\u8D70 WebVPN\uFF08\u9700\u8981\u5148 fdu login\uFF09\u3002",
@@ -4400,7 +4400,7 @@ var OPS = [
   }),
   op({
     name: "danke.search",
-    summary: "\u65E6\u514B\uFF08\u8BFE\u7A0B\u8BC4\u4EF7\uFF09\u91CC\u641C\u7D22\u8BFE\u7A0B\u3002",
+    summary: "\u5728\u86CB\u58F3\u8BFE\u8BC4\uFF08danke.fduhole.com\uFF0C\u65E6\u631E\u7684\u8BFE\u7A0B\u8BC4\u4EF7\uFF09\u91CC\u641C\u7D22\u8BFE\u7A0B\u3002",
     login: "hole",
     effect: "read",
     params: { keyword: z.string().min(1).describe("\u8BFE\u7A0B\u540D\u6216\u8BFE\u7A0B\u4EE3\u7801"), limit: int2("\u51E0\u6761\uFF0C\u9ED8\u8BA4 10", 1, 50) },
@@ -4410,7 +4410,7 @@ var OPS = [
   }),
   op({
     name: "danke.reviews",
-    summary: "\u67D0\u95E8\u8BFE\u5728\u65E6\u514B\u4E0A\u7684\u8BC4\u4EF7\uFF08\u8BC4\u5206\u3001\u4F5C\u4E1A\u91CF\u3001\u7ED9\u5206\u3001\u5404\u8001\u5E08\u7684\u8BC4\u4EF7\uFF09\u3002",
+    summary: "\u67D0\u95E8\u8BFE\u5728\u86CB\u58F3\u8BFE\u8BC4\u4E0A\u7684\u8BC4\u4EF7\uFF08\u8BC4\u5206\u3001\u4F5C\u4E1A\u91CF\u3001\u7ED9\u5206\u3001\u5404\u8001\u5E08\u7684\u8BC4\u4EF7\uFF09\u3002",
     login: "hole",
     effect: "read",
     params: { id: z.coerce.number().int().positive().describe("\u8BFE\u7A0B\u7EC4 id\uFF08\u6765\u81EA danke search \u7684 course_group_id\uFF09"), max: int2("\u6700\u591A\u51E0\u6761\u8BC4\u4EF7\uFF0C\u9ED8\u8BA4 12", 1, 50) },
@@ -4546,7 +4546,7 @@ function describeOp(op2) {
 }
 
 // src/mcp.ts
-var VERSION = true ? "0.1.0" : "0.0.0-dev";
+var VERSION = true ? "0.1.1" : "0.0.0-dev";
 var LOGIN_NOTE = {
   uis: "\u9700\u8981\u590D\u65E6\u8D26\u53F7\u767B\u5F55\uFF08\u6CA1\u767B\u5F55\u65F6\u8FD4\u56DE NEED_LOGIN\uFF0C\u8BF7\u7528\u6237\u5728\u7EC8\u7AEF\u8FD0\u884C `fdu login`\uFF0C\u6216\u8C03\u7528 auth_login\uFF09\u3002",
   hole: "\u9700\u8981\u6811\u6D1E\u8D26\u53F7\uFF08\u6CA1\u767B\u5F55\u65F6\u8FD4\u56DE NEED_HOLE_LOGIN\uFF0C\u8BF7\u7528\u6237\u5728\u7EC8\u7AEF\u8FD0\u884C `fdu hole login --email ...`\uFF09\u3002",
@@ -4614,7 +4614,7 @@ var GROUPS = [
   { id: "venue", name: "\u4F53\u80B2\u573A\u9986", desc: "\u5404\u573A\u9986\u6BCF\u4E2A\u65F6\u6BB5\u8FD8\u6709\u54EA\u4E9B\u573A\u5730\u7A7A\u7740\uFF08\u53EA\u770B\uFF0C\u4E0D\u9884\u7EA6\uFF09" },
   { id: "dorm", name: "\u5BBF\u820D", desc: "\u5269\u4F59\u7535\u91CF" },
   { id: "hole", name: "\u6811\u6D1E", desc: "\u641C\u7D22\u548C\u9605\u8BFB\u6811\u6D1E\u5E16\u5B50\uFF08\u9700\u8981\u6811\u6D1E\u8D26\u53F7\uFF09" },
-  { id: "danke", name: "\u65E6\u514B", desc: "\u8BFE\u7A0B\u8BC4\u4EF7\uFF08\u9700\u8981\u6811\u6D1E\u8D26\u53F7\uFF09" },
+  { id: "danke", name: "\u86CB\u58F3\u8BFE\u8BC4", desc: "\u8BFE\u7A0B\u8BC4\u4EF7\uFF08\u9700\u8981\u6811\u6D1E\u8D26\u53F7\uFF09" },
   { id: "mail", name: "\u5B66\u751F\u90AE\u7BB1", desc: "\u6536\u4EF6\u7BB1\uFF08IMAP \u53EA\u8BFB\uFF0C\u9700\u8981\u5BA2\u6237\u7AEF\u4E13\u7528\u5BC6\u7801\uFF09" },
   { id: "calendar", name: "\u65E5\u5386", desc: "\u628A\u8BFE\u8868\u3001\u8003\u8BD5\u3001\u4F5C\u4E1A\u622A\u6B62\u5BFC\u51FA\u6210 .ics" },
   { id: "cache", name: "\u7F13\u5B58", desc: "\u672C\u673A\u7F13\u5B58\u7684\u67E5\u8BE2\u7ED3\u679C" },
@@ -4709,7 +4709,7 @@ function helpOp(op2) {
 }
 
 // src/cli.ts
-var VERSION2 = true ? "0.1.0" : "0.0.0-dev";
+var VERSION2 = true ? "0.1.1" : "0.0.0-dev";
 var ALIASES = {
   login: "auth.login",
   logout: "auth.logout",

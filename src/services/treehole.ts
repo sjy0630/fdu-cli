@@ -1,7 +1,7 @@
 import { isWebvpnLogin, toWebvpnUrl } from './webvpn';
 
 /**
- * 复旦树洞（旦挞）与旦克课程评价，只读。
+ * 复旦树洞（旦挞茶楼）与蛋壳课评，只读。
  *
  * - 接口地址：forum / auth / danke.fduhole.com（与 DanXi 客户端相同的公开服务）。
  * - 网络：先试直连（校园网内可以直接访问）；连不上时改走 WebVPN，WebVPN 登录复用复旦统一身份认证。
@@ -160,7 +160,7 @@ export class TreeholeClient implements TreeholeApi {
     return (Array.isArray(d) ? d : []).map((x) => ({ division_id: x.division_id, name: x.name, description: clean(x.description, 80) }));
   }
 
-  // ---------- 旦克课程评价 ----------
+  // ---------- 蛋壳课评 ----------
   async searchCourses(keyword: string, limit = 10) {
     const r = await this.get<{ items?: RawCourseGroup[] } | RawCourseGroup[]>(`${DANKE}/v3/course_groups/search`, { query: keyword, page: 1, page_size: Math.min(20, limit) });
     const items = Array.isArray(r) ? r : r.items ?? [];

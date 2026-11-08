@@ -1,6 +1,7 @@
 # 发布新版本：推送 v* 标签（如 v0.1.0），或在 Actions 页面手动运行（用 package.json 里的版本号建标签）。
-# 检查、打包，把 fdu-cli.tgz 附到 GitHub Release，之后可以
-# npm install -g https://github.com/sjy0630/fdu-cli/releases/latest/download/fdu-cli.tgz
+# 检查、打包，把 fdu-cli.tgz 附到 GitHub Release，并发布到 npm。
+# npm 用可信发布（OIDC，不需要令牌）：要先在 npmjs.com 的包设置里把这个仓库和 release.yml 设为 Trusted Publisher。
+# 重新运行是安全的：已经存在的 Release、npm 上已有的版本会跳过。
 name: Release
 on:
   push:
@@ -8,6 +9,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: write
+  id-token: write
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -17,6 +19,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          registry-url: https://registry.npmjs.org
       - name: 版本号
         run: |
           version=$(node -p "require('./package.json').version")
@@ -33,4 +36,11 @@ jobs:
       - run: awk -v v="## $VERSION " 'index($0, v) == 1 { p = 1; next } /^## / { if (p) exit } p' CHANGELOG.md > notes.md && test -s notes.md
       - env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$TAG" fdu-cli.tgz --target "$GITHUB_SHA" --title "fdu-cli $TAG" --notes-file notes.md
+        run: gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" fdu-cli.tgz --target "$GITHUB_SHA" --title "fdu-cli $TAG" --notes-file notes.md
+      - name: 发布到 npm
+        run: |
+          # 第一次要在本机手动发布，并在 npmjs.com 设好 Trusted Publisher，之后的版本才由这里发布
+          if ! npm view fdu-cli name >/dev/null 2>&1; then echo "npm 上还没有 fdu-cli，跳过（第一次请手动发布）"; exit 0; fi
+          if npm view "fdu-cli@$VERSION" version >/dev/null 2>&1; then echo "npm 上已有 $VERSION，跳过"; exit 0; fi
+          npm install -g npm@^11.5.1
+          npm publish fdu-cli.tgz --access public

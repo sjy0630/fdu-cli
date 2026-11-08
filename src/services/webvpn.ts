@@ -3,7 +3,7 @@ import { createCipheriv } from 'node:crypto';
 /**
  * 复旦 WebVPN（webvpn.fudan.edu.cn）的地址改写。
  *
- * 校外访问只对校内开放的服务（如树洞、旦克）时，把原地址改写成 WebVPN 地址：
+ * 校外访问只对校内开放的服务（如树洞、蛋壳课评）时，把原地址改写成 WebVPN 地址：
  *   https://forum.fduhole.com/api/x → https://webvpn.fudan.edu.cn/https/<加密的主机名>/api/x
  * 主机名用 AES-128-CFB 加密，密钥和 IV 都是 WebVPN 系统公开约定的 "wrdvpnisthebest!"
  * （DanXi 等复旦同学的开源项目都按这个规则访问）。登录 WebVPN 复用复旦统一身份认证。

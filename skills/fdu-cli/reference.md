@@ -600,13 +600,13 @@ fdu venue free --venue 正大 --date 2026-11-10 --days 3
 | `--length` | integer |  | 几条，默认 10 |
 | `--tag` | string |  | 标签 |
 
-## 旦克
+## 蛋壳课评
 
 课程评价（需要树洞账号）
 
 ### `fdu danke search`
 
-旦克（课程评价）里搜索课程。
+在蛋壳课评（danke.fduhole.com，旦挞的课程评价）里搜索课程。
 
 登录：树洞账号 · 只读 · MCP：`danke_search`
 
@@ -617,7 +617,7 @@ fdu venue free --venue 正大 --date 2026-11-10 --days 3
 
 ### `fdu danke reviews`
 
-某门课在旦克上的评价（评分、作业量、给分、各老师的评价）。
+某门课在蛋壳课评上的评价（评分、作业量、给分、各老师的评价）。
 
 登录：树洞账号 · 只读 · MCP：`danke_reviews`
 

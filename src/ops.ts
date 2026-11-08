@@ -979,7 +979,7 @@ export const OPS: Op[] = [
     },
   }),
 
-  // ======================= 树洞与旦克 =======================
+  // ======================= 树洞与蛋壳课评 =======================
   op({
     name: 'hole.login', summary: '登录树洞（旦挞）账号：密码只用来换取令牌，不保存。校外会自动走 WebVPN（需要先 fdu login）。', login: 'none', effect: 'auth', mcp: false,
     params: { email: z.string().email().describe('树洞账号邮箱，通常是 学号@m.fudan.edu.cn') },
@@ -1009,12 +1009,12 @@ export const OPS: Op[] = [
     async run(ctx, a) { return treehole(ctx).latest({ length: a.length, tag: a.tag }); },
   }),
   op({
-    name: 'danke.search', summary: '旦克（课程评价）里搜索课程。', login: 'hole', effect: 'read',
+    name: 'danke.search', summary: '在蛋壳课评（danke.fduhole.com，旦挞的课程评价）里搜索课程。', login: 'hole', effect: 'read',
     params: { keyword: z.string().min(1).describe('课程名或课程代码'), limit: int('几条，默认 10', 1, 50) },
     async run(ctx, a) { return treehole(ctx).searchCourses(a.keyword, a.limit); },
   }),
   op({
-    name: 'danke.reviews', summary: '某门课在旦克上的评价（评分、作业量、给分、各老师的评价）。', login: 'hole', effect: 'read',
+    name: 'danke.reviews', summary: '某门课在蛋壳课评上的评价（评分、作业量、给分、各老师的评价）。', login: 'hole', effect: 'read',
     params: { id: z.coerce.number().int().positive().describe('课程组 id（来自 danke search 的 course_group_id）'), max: int('最多几条评价，默认 12', 1, 50) },
     async run(ctx, a) { return treehole(ctx).courseReviews(a.id, a.max); },
   }),

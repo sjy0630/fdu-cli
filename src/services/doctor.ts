@@ -78,7 +78,7 @@ export async function runDoctor(d: DoctorDeps): Promise<{ healthy: boolean; chec
   } catch (e) {
     checks.push({ name: '复旦账号', status: 'warn', detail: `查不到登录状态：${String((e as Error).message ?? e).slice(0, 120)}` });
   }
-  checks.push(d.treehole ? { name: '树洞账号', status: 'ok', detail: '已登录' } : { name: '树洞账号', status: 'warn', detail: '没有登录（不用树洞、旦克可以忽略）', fix: 'fdu hole login --email 学号@m.fudan.edu.cn' });
+  checks.push(d.treehole ? { name: '树洞账号', status: 'ok', detail: '已登录' } : { name: '树洞账号', status: 'warn', detail: '没有登录（不用树洞、蛋壳课评可以忽略）', fix: 'fdu hole login --email 学号@m.fudan.edu.cn' });
   checks.push(d.mail ? { name: '学生邮箱', status: 'ok', detail: '已配置' } : { name: '学生邮箱', status: 'warn', detail: '没有配置（不查邮件可以忽略）', fix: 'fdu mail setup --user 学号@m.fudan.edu.cn' });
 
   return { healthy: !checks.some((c) => c.status === 'fail'), checks };

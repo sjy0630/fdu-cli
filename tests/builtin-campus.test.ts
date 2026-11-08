@@ -5,7 +5,7 @@ import { TreeholeClient, TreeholeLoginError, type HoleTokens, type RawFetch, typ
 import { parseElectricity, readElectricity } from '../src/services/dorm';
 import { NeedLoginError } from '../src/core/fudan-auth';
 
-/** 图书馆文献检索、WebVPN、树洞与旦克、宿舍电量（接口返回格式按真实服务，内容虚构） */
+/** 图书馆文献检索、WebVPN、树洞与蛋壳课评、宿舍电量（接口返回格式按真实服务，内容虚构） */
 
 describe('图书馆文献检索', () => {
   const doc = { context: 'PC', pnx: {
@@ -46,7 +46,7 @@ describe('WebVPN 地址改写', () => {
   });
 });
 
-describe('树洞与旦克', () => {
+describe('树洞与蛋壳课评', () => {
   const json = (data: unknown, status = 200, url = ''): RawResponse => ({ status, url, contentType: 'application/json', text: JSON.stringify(data) });
   const store = (initial: HoleTokens | null = null) => { let t = initial; return { get: () => t, set: (v: HoleTokens | null) => { t = v; } }; };
 
@@ -131,7 +131,7 @@ describe('树洞与旦克', () => {
     await expect(new TreeholeClient({ fetch, ensureWebvpn: async () => {}, tokens: store() }).login('a', 'b')).rejects.toThrow('auth.fduhole.com');
   });
 
-  it('旦克课程评价按推荐数排序', async () => {
+  it('蛋壳课评按推荐数排序', async () => {
     const fetch: RawFetch = async (url) => url.endsWith('/divisions') ? json([]) : json({
       name: '数据结构', code: 'COMP130004', review_count: 2, course_list: [{ teachers: '张老师', year: 2025, semester: 1, review_list: [
         { title: '一般', content: '还行', remark: 1, vote: 1, rank: { overall: 3 } }, { title: '很好', content: '推荐', remark: 9, vote: 5, rank: { overall: 5 } },
