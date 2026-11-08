@@ -268,6 +268,24 @@ fdu jw timetable --semester 2026-2027学年1学期
 
 登录：复旦账号 · 只读 · **隐私数据** · MCP：`jw_program`
 
+### `fdu jw lessons`
+
+全校开课查询：按课程名搜某学期开的课（教学班代码、学分、任课老师、上课时间地点、限选和已选人数、考试方式），选课时用。
+
+登录：复旦账号 · 只读 · MCP：`jw_lessons`
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `--keyword` | string | 是 | 课程名（包含即可），如「数据结构」 |
+| `--semester` | string |  | 学期 id 或名称关键词，默认当前学期 |
+| `--page` | integer |  | 第几页，默认 1 |
+| `--size` | integer |  | 每页几条，默认 20 |
+
+```bash
+fdu jw lessons --keyword 数据结构
+fdu jw lessons --keyword 线性代数 --semester 2026-2027学年2学期
+```
+
 ### `fdu jw selected`
 
 选课结果：某学期已选上的课、学分和上课时间。
@@ -405,6 +423,33 @@ fdu venue free --venue 正大 --date 2026-11-10 --days 3
 各图书馆在馆人数和还能进多少人（公开接口，不用登录）。
 
 登录：不用 · 只读 · MCP：`library_seats`
+
+### `fdu library login`
+
+登录图书馆「我的借阅」：打开图书馆页面，点「登录」（走统一身份认证，已登录复旦账号时一般不用再输密码），看到借阅信息后窗口会自动关闭。
+
+登录：不用 · 登录 / 退出 · 仅命令行
+
+### `fdu library loans`
+
+图书馆在借的书：书名、作者、索书号、馆藏地、借阅日期、应还日期、还剩几天、续借次数；以及还能借几本、逾期几本、欠费。只看，不续借。
+
+登录：复旦账号 · 只读 · **隐私数据** · MCP：`library_loans`
+
+```bash
+fdu library loans
+```
+
+### `fdu library history`
+
+图书馆借阅历史（书名、作者、借阅和归还日期），按页读取。
+
+登录：复旦账号 · 只读 · **隐私数据** · MCP：`library_history`
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `--page` | integer |  | 第几页，默认 1 |
+| `--size` | integer |  | 每页几条，默认 20 |
 
 ### `fdu library search`
 

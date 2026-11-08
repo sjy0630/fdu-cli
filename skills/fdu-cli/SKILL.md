@@ -25,7 +25,7 @@ description: 查询复旦大学校园服务：eLearning 课程 / 作业 / DDL / 
 
 ## 隐私
 
-- `jw.grades`、`jw.gpa`、`jw.program`、`card.transactions`、`mail.list`、`mail.read` 返回隐私数据（消费记录能看出用户的行踪和习惯）：只用来回答用户本人的问题。**不要**写进代码仓库、提交信息、日志、issue / PR，也不要贴到别的服务里。
+- `jw.grades`、`jw.gpa`、`jw.program`、`card.transactions`、`library.loans`、`library.history`、`mail.list`、`mail.read` 返回隐私数据（消费记录能看出用户的行踪和习惯）：只用来回答用户本人的问题。**不要**写进代码仓库、提交信息、日志、issue / PR，也不要贴到别的服务里。
 - 不要把 `~/.config/fdu-cli/`（Windows：`%APPDATA%\fdu-cli\`）里的文件读出来、复制或提交，那是登录凭证。
 - 树洞内容是匿名同学的个人看法：引用时说明来源和洞号，综合多条再下结论，不当作事实。
 
@@ -52,6 +52,8 @@ description: 查询复旦大学校园服务：eLearning 课程 / 作业 / DDL / 
 | 课程公告 | `fdu elearning announcements --days 7` |
 | 总结某节课讲了什么 | `fdu icourse search --keyword 数据结构` → `fdu icourse lectures --course <课程号> --playback` → `fdu icourse transcript --course <课程号> --lecture <讲次号>`；文字稿长时按 `nextOffset` 接着读 |
 | 教务处 / 院系通知 | `fdu notices list --source 教务处`，细节 `fdu notices read --url <链接>` |
+| 借的书什么时候到期 | `fdu library loans`（没登录图书馆时请用户在终端运行 `fdu library login`）；不能续借，续借请用户自己去图书馆网站 |
+| 选课：某门课谁开、几点、还有名额吗 | `fdu jw lessons --keyword 数据结构`（下学期加 `--semester`） |
 | 找论文 | `fdu library search --query "..." --year-from 2022`，只依据摘要总结，给出 DOI 或链接 |
 | 哪个图书馆人少 | `fdu library seats` |
 | 去哪打球 / 场馆还有空吗 | `fdu venue free --venue "北区 羽毛球" --days 3`（只能看，预约要用户自己去 booking.fudan.edu.cn） |

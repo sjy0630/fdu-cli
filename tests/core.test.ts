@@ -55,12 +55,12 @@ describe('操作表', () => {
       expect(o.name).toMatch(/^[a-z]+\.[a-z]+$/);
       expect(o.summary.length).toBeGreaterThan(5);
     }
-    expect(OPS.filter((o) => o.sensitive).map((o) => o.name).sort()).toEqual(['card.transactions', 'jw.gpa', 'jw.grades', 'jw.program', 'mail.list', 'mail.read']);
+    expect(OPS.filter((o) => o.sensitive).map((o) => o.name).sort()).toEqual(['card.transactions', 'jw.gpa', 'jw.grades', 'jw.program', 'library.history', 'library.loans', 'mail.list', 'mail.read']);
   });
 
   it('需要在终端输入密码的、删除本地状态的不开放给 MCP；其余都能生成参数表', () => {
     const hidden = OPS.filter((o) => o.mcp === false).map((o) => o.name).sort();
-    expect(hidden).toEqual(['auth.logout', 'cache.clear', 'dev.capture', 'hole.login', 'hole.logout', 'mail.forget', 'mail.setup']);
+    expect(hidden).toEqual(['auth.logout', 'cache.clear', 'dev.capture', 'hole.login', 'hole.logout', 'library.login', 'mail.forget', 'mail.setup']);
     for (const o of OPS) expect(() => z.toJSONSchema(z.object(mcpShape(o)))).not.toThrow();
     expect(toolDescription(findOp('jw.grades')!)).toContain('隐私');
   });

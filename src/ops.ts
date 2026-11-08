@@ -11,8 +11,10 @@ import { readCardBalance, readLibrary } from './services/campus-life';
 import { readElectricity } from './services/dorm';
 import { CanvasClient, isAssignmentDone, type CanvasCourse } from './services/elearning';
 import { readGpaRank, readGrades, readStudentId } from './services/grades';
-import { readExams, readSemesters, readTimetable } from './services/jw';
+import { readExams, readLessons, readSemesters, readTimetable } from './services/jw';
 import { LibrarySearch } from './services/library-search';
+import { OPAC, readHistory, readLoans, type GetJson as LibGetJson } from './services/library-account';
+import type { Page } from 'playwright-core';
 import { DEFAULT_FUDAN_STUDENT_IMAP, ImapMailClient } from './services/mail';
 import { parseNoticeDetail, parseNoticeList } from './services/notice-parse';
 import { findNoticeSource, NOTICE_SOURCES } from './services/notice-sources';
@@ -206,6 +208,69 @@ async function withBooking<T>(ctx: Ctx, work: (getJson: GetJson) => Promise<T>):
   }, { headless: true, timeoutMs: 60_000, platform: 'jwfw' });
   if (failure) throw failure;
   if (!result) throw new FduError('UPSTREAM', '场馆预约系统没有打开。', '稍后再试；也可以直接在浏览器里打开 booking.fudan.edu.cn 查看。');
+  return result.value;
+}
+
+/** 图书馆网页应用把令牌存在浏览器里：在本地存储里找名字带 token 的项（值可能是字符串，也可能是 JSON） */
+export function findLibraryToken(entries: [string, string][]): string | undefined {
+  const plausible = (v: unknown) => typeof v === 'string' && /^[\w.\-]{20,}$/.test(v);
+  const dig = (o: unknown, depth = 0): string | undefined => {
+    if (!o || typeof o !== 'object' || depth > 4) return undefined;
+    for (const [k, v] of Object.entries(o as Record<string, unknown>)) {
+      if (/^(access_?token|accessToken|token)$/i.test(k) && plausible(v)) return v as string;
+      const inner = dig(v, depth + 1);
+      if (inner) return inner;
+    }
+    return undefined;
+  };
+  const ranked = [...entries].sort(([a], [b]) => Number(/access/i.test(b)) - Number(/access/i.test(a)));
+  for (const [k, v] of ranked) {
+    if (!/token/i.test(k) && !/token/i.test(v.slice(0, 200))) continue;
+    if (/token/i.test(k) && plausible(v.replace(/^"|"$/g, ''))) return v.replace(/^"|"$/g, '');
+    try { const t = dig(JSON.parse(v)); if (t) return t; } catch { /* 不是 JSON */ }
+  }
+  return undefined;
+}
+
+async function storageEntries(page: Page): Promise<[string, string][]> {
+  return page.evaluate(`(() => {
+    const out = [];
+    for (const st of [window.localStorage, window.sessionStorage]) {
+      try { for (let i = 0; i < st.length; i++) { const k = st.key(i); out.push([k, st.getItem(k) || '']); } } catch {}
+    }
+    return out;
+  })()`).then((v) => (Array.isArray(v) ? v as [string, string][] : [])).catch(() => []);
+}
+
+const LIB_LOGIN_HINT = '运行 `fdu library login`，在打开的图书馆页面里登录一次（之后会记住）。';
+
+/** 在无界面浏览器里打开图书馆页面，拿到令牌后用页面里的请求读借阅接口 */
+async function withLibrary<T>(ctx: Ctx, work: (getJson: LibGetJson) => Promise<T>): Promise<T> {
+  if (!ctx.session.hasState()) throw new NeedLoginError('jwfw');
+  const started = Date.now();
+  let result: { value: T } | undefined;
+  let failure: unknown;
+  await ctx.session.withPage(OPAC, async (page) => {
+    if (new URL(page.url()).hostname !== 'opac.fudan.edu.cn') return false;
+    const token = findLibraryToken(await storageEntries(page));
+    if (!token) {
+      // 网页应用可能还在加载、刷新令牌，等一会儿
+      if (Date.now() - started < 10_000) return false;
+      failure = new FduError('NEED_LOGIN', '还没有登录图书馆。', LIB_LOGIN_HINT);
+      return true;
+    }
+    const getJson: LibGetJson = (url) => page.evaluate(async ([u, t]: string[]) => {
+      const r = await fetch(u, { headers: { access_token: t, Accept: 'application/json' } });
+      return { status: r.status, text: await r.text() };
+    }, [url, token]);
+    try { result = { value: await work(getJson) }; } catch (e) {
+      if (e instanceof Error && /Execution context was destroyed|navigat/i.test(e.message)) return false;
+      failure = e;
+    }
+    return true;
+  }, { headless: true, timeoutMs: 40_000, platform: 'jwfw' });
+  if (failure) throw failure;
+  if (!result) throw new FduError('UPSTREAM', '图书馆页面没有打开。', '稍后再试；也可以直接打开 opac.fudan.edu.cn 查看。');
   return result.value;
 }
 
@@ -513,6 +578,18 @@ export const OPS: Op[] = [
     },
   }),
   op({
+    name: 'jw.lessons', summary: '全校开课查询：按课程名搜某学期开的课（教学班代码、学分、任课老师、上课时间地点、限选和已选人数、考试方式），选课时用。',
+    login: 'uis', effect: 'read',
+    params: {
+      keyword: z.string().min(1).describe('课程名（包含即可），如「数据结构」'),
+      semester: z.string().optional().describe('学期 id 或名称关键词，默认当前学期'),
+      page: int('第几页，默认 1', 1, 500),
+      size: int('每页几条，默认 20', 1, 100),
+    },
+    examples: ['fdu jw lessons --keyword 数据结构', 'fdu jw lessons --keyword 线性代数 --semester 2026-2027学年2学期'],
+    async run(ctx, a) { return readLessons(ctx.session.reader('jwfw'), { keyword: a.keyword, semester: a.semester, page: a.page, size: a.size }); },
+  }),
+  op({
     name: 'jw.selected', summary: '选课结果：某学期已选上的课、学分和上课时间。', login: 'uis', effect: 'read',
     params: { which: z.string().optional().describe('current 当前学期（默认）、next 下学期，或学期名关键词') },
     async run(ctx, a) { return readSelectedCourses(ctx.session.reader('jwfw'), a.which ?? 'current'); },
@@ -643,6 +720,39 @@ export const OPS: Op[] = [
   op({
     name: 'library.seats', summary: '各图书馆在馆人数和还能进多少人（公开接口，不用登录）。', login: 'none', effect: 'read', params: {},
     async run(ctx) { return readLibrary(async (url) => { const r = await ctx.session.raw(url, { method: 'POST' }); return { status: r.status, text: r.text }; }); },
+  }),
+  op({
+    name: 'library.login', summary: '登录图书馆「我的借阅」：打开图书馆页面，点「登录」（走统一身份认证，已登录复旦账号时一般不用再输密码），看到借阅信息后窗口会自动关闭。',
+    login: 'none', effect: 'auth', mcp: false, params: {},
+    async run(ctx) {
+      let ok = false;
+      let listening = false;
+      ctx.log('已打开图书馆页面：请点右上角「登录」，登录后进入「我的借阅」，看到借阅信息后窗口会自动关闭。');
+      await ctx.session.withPage(OPAC, async (page) => {
+        if (!listening) {
+          listening = true;
+          page.on('response', (res) => {
+            if (!res.url().includes('fdulspgw.fudan.edu.cn/alsp/open-api/elib5/') || res.status() !== 200) return;
+            if (res.request().headers().access_token) ok = true;
+          });
+        }
+        return ok;
+      }, { headless: false, timeoutMs: 300_000 });
+      if (!ok) throw new FduError('NEED_LOGIN', '没有完成图书馆登录。', '重新运行 `fdu library login`，登录后点开「我的借阅」。');
+      await ctx.session.save();
+      return { loggedIn: true };
+    },
+  }),
+  op({
+    name: 'library.loans', summary: '图书馆在借的书：书名、作者、索书号、馆藏地、借阅日期、应还日期、还剩几天、续借次数；以及还能借几本、逾期几本、欠费。只看，不续借。',
+    login: 'uis', effect: 'read', sensitive: true, params: {},
+    examples: ['fdu library loans'],
+    async run(ctx) { return withLibrary(ctx, (getJson) => readLoans(getJson, shanghaiDay(ctx.now()))); },
+  }),
+  op({
+    name: 'library.history', summary: '图书馆借阅历史（书名、作者、借阅和归还日期），按页读取。', login: 'uis', effect: 'read', sensitive: true,
+    params: { page: int('第几页，默认 1', 1, 1000), size: int('每页几条，默认 20', 1, 100) },
+    async run(ctx, a) { return withLibrary(ctx, (getJson) => readHistory(getJson, a.page ?? 1, a.size ?? 20)); },
   }),
   op({
     name: 'library.search', summary: '复旦图书馆文献检索（论文、图书；返回标题、作者、年份、摘要、DOI、详情页链接）。', login: 'none', effect: 'read',

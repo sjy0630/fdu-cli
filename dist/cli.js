@@ -24,10 +24,10 @@ var UIS_HOSTS = ["id.fudan.edu.cn", "uis.fudan.edu.cn"];
 async function isPermissionDenied(res) {
   if (res.status !== 401) return false;
   try {
-    const body2 = await res.clone().json();
-    if (body2?.status === "unauthorized") return true;
-    if (body2?.status === "unauthenticated") return false;
-    return (body2?.errors ?? []).some((e) => typeof e?.message === "string" && /not authorized to perform/i.test(e.message));
+    const body3 = await res.clone().json();
+    if (body3?.status === "unauthorized") return true;
+    if (body3?.status === "unauthenticated") return false;
+    return (body3?.errors ?? []).some((e) => typeof e?.message === "string" && /not authorized to perform/i.test(e.message));
   } catch {
     return false;
   }
@@ -113,9 +113,9 @@ var Session = class {
       failOnStatusCode: false
     });
     this.dirty = true;
-    const body2 = await res.body();
+    const body3 = await res.body();
     const headers = res.headers();
-    return { status: res.status(), url: res.url() || url, contentType: headers["content-type"] ?? "", text: body2.toString("utf8"), body: body2, headers };
+    return { status: res.status(), url: res.url() || url, contentType: headers["content-type"] ?? "", text: body3.toString("utf8"), body: body3, headers };
   }
   /** 校内系统的请求：被带到统一身份认证登录页时抛出 NeedLoginError */
   async fetch(platform, url, init = {}) {
@@ -563,10 +563,10 @@ function parseSemesterPage(html) {
   return { semesters, currentId };
 }
 var int = (v) => typeof v === "number" || typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
-function parseUndergradTable(body2) {
+function parseUndergradTable(body3) {
   let data;
   try {
-    data = JSON.parse(body2);
+    data = JSON.parse(body3);
   } catch {
     throw new TimetableFormatError();
   }
@@ -590,10 +590,10 @@ function parseUndergradTable(body2) {
     }];
   });
 }
-function parsePostgradTable(body2) {
+function parsePostgradTable(body3) {
   let data;
   try {
-    data = JSON.parse(body2);
+    data = JSON.parse(body3);
   } catch {
     throw new TimetableFormatError();
   }
@@ -658,9 +658,9 @@ function extractTables(html) {
     if (nonEmpty.length < 2) return;
     const headerIdx = nonEmpty.findIndex((r) => $(table).find("tr").eq(rows.indexOf(r)).find("th").length > 0);
     const header = nonEmpty[headerIdx >= 0 ? headerIdx : 0];
-    const body2 = nonEmpty.filter((r) => r !== header).slice(0, 200);
+    const body3 = nonEmpty.filter((r) => r !== header).slice(0, 200);
     const caption = $(table).find("caption").text().trim() || $(table).prevAll("h1,h2,h3,h4,.title,legend").first().text().replace(/\s+/g, " ").trim() || void 0;
-    out.push({ caption, header, rows: body2 });
+    out.push({ caption, header, rows: body3 });
   });
   return out;
 }
@@ -700,7 +700,7 @@ function modulesFromJson(data) {
     }
     return void 0;
   };
-  const nameOf = (o) => {
+  const nameOf2 = (o) => {
     for (const k of ["nameZh", "name", "typeName", "moduleName", "courseTypeName", "groupName", "title"]) {
       const v = o[k];
       if (typeof v === "string" && v.trim()) return v.trim();
@@ -716,7 +716,7 @@ function modulesFromJson(data) {
     }
     if (!v || typeof v !== "object") return;
     const o = v;
-    const name = nameOf(o);
+    const name = nameOf2(o);
     const required = pick(o, /^(require|required|min|need)\w*credit/i);
     const earned = pick(o, /^(passed|acquired|finished|completed|obtain|earned|got)\w*credit/i);
     const taking = pick(o, /^(taking|studying|selected|inProgress|current)\w*credit/i);
@@ -815,20 +815,20 @@ async function readSelectedCourses(reader, which = "current") {
 import { load as load3 } from "cheerio";
 var LIBRARY_URL = "https://mlibrary.fudan.edu.cn/api/common/h5/getspaceseat";
 var CARD_URL = "https://ecard.fudan.edu.cn/epay/myepay/index";
-function parseLibrary(body2) {
+function parseLibrary(body3) {
   let data;
   try {
-    data = JSON.parse(body2);
+    data = JSON.parse(body3);
   } catch {
     throw new Error("\u56FE\u4E66\u9986\u63A5\u53E3\u8FD4\u56DE\u7684\u683C\u5F0F\u548C\u9884\u671F\u4E0D\u540C\u3002");
   }
   if (String(data?.code) !== "1" || !Array.isArray(data.data)) throw new Error("\u56FE\u4E66\u9986\u4EBA\u6570\u6682\u65F6\u67E5\u4E0D\u5230\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5\u3002");
-  const num2 = (v) => typeof v === "number" || typeof v === "string" && /^\d+$/.test(v.trim()) ? Number(v) : null;
+  const num3 = (v) => typeof v === "number" || typeof v === "string" && /^\d+$/.test(v.trim()) ? Number(v) : null;
   return data.data.flatMap((x) => {
     const r = x;
     const name = typeof r.campusName === "string" ? r.campusName.trim() : "";
     if (!name) return [];
-    return [{ name, inside: num2(r.inNum), remaining: num2(r.canInNumb), openTime: typeof r.libraryOpenTime === "string" && r.libraryOpenTime.trim() ? r.libraryOpenTime.trim() : void 0 }];
+    return [{ name, inside: num3(r.inNum), remaining: num3(r.canInNumb), openTime: typeof r.libraryOpenTime === "string" && r.libraryOpenTime.trim() ? r.libraryOpenTime.trim() : void 0 }];
   });
 }
 async function readLibrary(post) {
@@ -858,23 +858,23 @@ async function readCardBalance(reader) {
 // src/services/dorm.ts
 var ZLAPP_SSO = "https://zlapp.fudan.edu.cn/a_fudanzlapp/api/sso/index?sso=1";
 var ZLAPP_ELEC = "https://zlapp.fudan.edu.cn/fudanelec/wap/default/info";
-function parseElectricity(body2) {
+function parseElectricity(body3) {
   let data;
   try {
-    data = JSON.parse(body2);
+    data = JSON.parse(body3);
   } catch {
     throw new Error("\u7535\u91CF\u7CFB\u7EDF\u8FD4\u56DE\u7684\u683C\u5F0F\u548C\u9884\u671F\u4E0D\u540C\u3002");
   }
   if (Number(data.e) !== 0 || !data.d) throw new Error(data.m ? `\u7535\u91CF\u7CFB\u7EDF\uFF1A${data.m}` : "\u7535\u91CF\u7CFB\u7EDF\u6CA1\u6709\u8FD4\u56DE\u5BBF\u820D\u4FE1\u606F\uFF08\u53EF\u80FD\u6CA1\u6709\u7ED1\u5B9A\u5BBF\u820D\uFF09\u3002");
   const d = data.d;
-  const num2 = (v) => v === null || v === void 0 || v === "" ? void 0 : Number(v);
-  const remaining = num2(d.fj_surplus);
+  const num3 = (v) => v === null || v === void 0 || v === "" ? void 0 : Number(v);
+  const remaining = num3(d.fj_surplus);
   if (remaining === void 0 || !Number.isFinite(remaining)) throw new Error("\u7535\u91CF\u7CFB\u7EDF\u6CA1\u6709\u8FD4\u56DE\u5269\u4F59\u7535\u91CF\u3002");
   return {
     room: [d.xq, d.ssmc, d.fjmc].filter((x) => x !== null && x !== void 0 && x !== "").join(" "),
     remainingKwh: remaining,
-    usedKwh: num2(d.fj_used),
-    totalKwh: num2(d.fj_all),
+    usedKwh: num3(d.fj_used),
+    totalKwh: num3(d.fj_all),
     updatedAt: typeof d.fj_update_time === "string" ? d.fj_update_time : void 0
   };
 }
@@ -1113,10 +1113,10 @@ var CanvasClient = class {
 import { load as load4 } from "cheerio";
 var JW2 = "https://fdjwgl.fudan.edu.cn/student/for-std";
 var num = (v) => typeof v === "number" ? v : typeof v === "string" && v.trim() && Number.isFinite(Number(v)) ? Number(v) : void 0;
-function parseGradeSheet(body2, semesterNames) {
+function parseGradeSheet(body3, semesterNames) {
   let data;
   try {
-    data = JSON.parse(body2);
+    data = JSON.parse(body3);
   } catch {
     throw new TimetableFormatError("\u6559\u52A1\u7CFB\u7EDF\u8FD4\u56DE\u7684\u6210\u7EE9\u683C\u5F0F\u548C\u9884\u671F\u4E0D\u540C\uFF0C\u5B66\u6821\u9875\u9762\u53EF\u80FD\u66F4\u65B0\u4E86\u3002");
   }
@@ -1148,10 +1148,10 @@ function weightedGpa(courses) {
   if (!credits) return { credits: courses.reduce((n, c) => n + (c.credits ?? 0), 0) };
   return { gpa: Math.round(counted.reduce((n, c) => n + c.gp * c.credits, 0) / credits * 100) / 100, credits: courses.reduce((n, c) => n + (c.credits ?? 0), 0) };
 }
-function parseGpaRank(body2, studentNumber) {
+function parseGpaRank(body3, studentNumber) {
   let data;
   try {
-    data = JSON.parse(body2);
+    data = JSON.parse(body3);
   } catch {
     return void 0;
   }
@@ -1259,6 +1259,50 @@ async function readExams(reader, opts = {}) {
   if (!looksLoaded(html) && reader.render) html = await reader.render(EXAM_URL, looksLoaded);
   const now = opts.now ?? Date.now();
   return parseExamPage(html).filter((e) => opts.all || Date.parse(e.endsAt ?? e.startsAt) > now - 30 * 864e5).sort((a, b) => a.startsAt.localeCompare(b.startsAt));
+}
+var LESSON_SEARCH = "https://fdjwgl.fudan.edu.cn/student/for-std/lesson-search";
+var nameOf = (x) => x && typeof x.nameZh === "string" && x.nameZh.trim() ? x.nameZh.trim() : void 0;
+var numOf = (v) => typeof v === "number" && Number.isFinite(v) ? v : void 0;
+function parseLessons(body3) {
+  let j;
+  try {
+    j = JSON.parse(body3);
+  } catch {
+    throw new TimetableFormatError("\u5168\u6821\u5F00\u8BFE\u67E5\u8BE2\u8FD4\u56DE\u7684\u683C\u5F0F\u548C\u9884\u671F\u4E0D\u540C\uFF0C\u5B66\u6821\u9875\u9762\u53EF\u80FD\u66F4\u65B0\u4E86\u3002");
+  }
+  const rows = Array.isArray(j.data) ? j.data : [];
+  const lessons = rows.map((r) => {
+    const course = r.course ?? {};
+    const teachers = (r.teacherAssignmentList ?? []).map((t) => nameOf(t.person)).filter((x) => !!x);
+    const schedule = r.scheduleText?.dateTimePlacePersonText?.textZh;
+    return {
+      code: String(r.code ?? ""),
+      course: nameOf(course) ?? nameOf(r) ?? "",
+      ...typeof course.code === "string" ? { courseCode: course.code } : {},
+      ...numOf(course.credits) !== void 0 ? { credits: numOf(course.credits) } : {},
+      teachers: [...new Set(teachers)],
+      ...typeof schedule === "string" && schedule.trim() ? { schedule: schedule.replace(/\s+/g, " ").trim() } : {},
+      ...nameOf(r.openDepartment) ? { department: nameOf(r.openDepartment) } : {},
+      ...numOf(r.limitCount) !== void 0 ? { limit: numOf(r.limitCount) } : {},
+      ...numOf(r.stdCount) !== void 0 ? { selected: numOf(r.stdCount) } : {},
+      ...nameOf(r.examMode) ? { examMode: nameOf(r.examMode) } : {},
+      ...nameOf(r.teachLang) ? { language: nameOf(r.teachLang) } : {},
+      ...nameOf(r.courseType) ? { courseType: nameOf(r.courseType) } : {}
+    };
+  });
+  const p = j._page_ ?? {};
+  return { lessons, page: Number(p.currentPage ?? 1) || 1, pages: Number(p.totalPages ?? 1) || 1, total: Number(p.totalRows ?? lessons.length) || lessons.length };
+}
+async function readLessons(reader, opts) {
+  const { semesters, currentId } = await readSemesters(reader);
+  const want = opts.semester?.trim();
+  const semester = want ? semesters.find((s) => s.id === want) ?? semesters.find((s) => s.name.includes(want)) : semesters.find((s) => s.id === currentId) ?? semesters[0];
+  if (!semester) throw Object.assign(new Error(`\u6CA1\u6709\u627E\u5230\u5B66\u671F\u300C${want}\u300D\uFF0C\u7528 fdu jw semesters \u67E5\u770B\u5B66\u671F\u5217\u8868\u3002`), { code: "NOT_FOUND" });
+  const { studentId } = await readStudentId(reader);
+  const qs = new URLSearchParams({ queryPage__: `${opts.page ?? 1},${opts.size ?? 20}`, courseNameZhLike: opts.keyword });
+  const res = await reader.getText(`${LESSON_SEARCH}/semester/${semester.id}/search/${studentId}?${qs}`, { headers: { "X-Requested-With": "XMLHttpRequest", Accept: "application/json" } });
+  if (res.status >= 400) throw new Error(`\u6559\u52A1\u7CFB\u7EDF\u8FD4\u56DE ${res.status}`);
+  return { semester: semester.name, keyword: opts.keyword, ...parseLessons(res.text) };
 }
 
 // src/services/library-search.ts
@@ -1385,6 +1429,97 @@ var LibrarySearch = class {
     return this.recent.get(recordId);
   }
 };
+
+// src/services/library-account.ts
+var OPAC = "https://opac.fudan.edu.cn/";
+var LIB_API = "https://fdulspgw.fudan.edu.cn/alsp/open-api/elib5";
+var str = (v) => typeof v === "string" && v.trim() ? v.trim() : void 0;
+var num2 = (v) => typeof v === "number" && Number.isFinite(v) ? v : typeof v === "string" && v.trim() && Number.isFinite(Number(v)) ? Number(v) : void 0;
+function libDate(v) {
+  const s = str(v);
+  if (!s) return void 0;
+  const m = /^(\d{4})-?(\d{2})-?(\d{2})/.exec(s);
+  return m ? `${m[1]}-${m[2]}-${m[3]}` : void 0;
+}
+function body(r, what) {
+  if (r.status === 401 || r.status === 403) throw new FduError("NEED_LOGIN", "\u56FE\u4E66\u9986\u767B\u5F55\u5DF2\u8FC7\u671F\u3002", "\u8FD0\u884C `fdu library login`\uFF0C\u5728\u6253\u5F00\u7684\u56FE\u4E66\u9986\u9875\u9762\u91CC\u767B\u5F55\u4E00\u6B21\u3002");
+  let j;
+  try {
+    j = JSON.parse(r.text);
+  } catch {
+    throw new FduError("UPSTREAM", `\u56FE\u4E66\u9986\u7CFB\u7EDF\u8FD4\u56DE\u7684\u4E0D\u662F\u6570\u636E\uFF08${what}\uFF0C${r.status}\uFF09\u3002`);
+  }
+  const code = Number(j.code);
+  if (code === 401 || code === 403 || /登录|token|过期|未授权/i.test(String(j.msg ?? j.message ?? "")) && code !== 0 && code !== 200) {
+    throw new FduError("NEED_LOGIN", "\u56FE\u4E66\u9986\u767B\u5F55\u5DF2\u8FC7\u671F\u3002", "\u8FD0\u884C `fdu library login`\uFF0C\u5728\u6253\u5F00\u7684\u56FE\u4E66\u9986\u9875\u9762\u91CC\u767B\u5F55\u4E00\u6B21\u3002");
+  }
+  if (code !== 0 && code !== 200) throw new FduError("UPSTREAM", `\u56FE\u4E66\u9986\u7CFB\u7EDF\uFF1A${String(j.msg ?? j.message ?? code)}`);
+  return j;
+}
+function parseCurrentLoans(json, today) {
+  const list2 = json?.data?.list ?? [];
+  return list2.map((row) => {
+    const info = row.itemInfo ?? {};
+    const item = info.item ?? {};
+    const inst = info.instance ?? {};
+    const log = row.loanLog ?? {};
+    const policy = row.circulationLoanPolicy ?? {};
+    const dueDate = libDate(log.dueDate) ?? libDate(item.returnTime);
+    const daysLeft = dueDate ? Math.round((Date.parse(`${dueDate}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 864e5) : void 0;
+    return {
+      title: str(inst.title) ?? "\uFF08\u672A\u77E5\u4E66\u540D\uFF09",
+      ...str(inst.author) ? { author: str(inst.author) } : {},
+      ...str(inst.callNo ?? item.callNo) ? { callNo: str(inst.callNo ?? item.callNo) } : {},
+      ...str(inst.ISBN) ? { isbn: str(inst.ISBN) } : {},
+      ...str(item.permanentLibraryName) ? { library: str(item.permanentLibraryName) } : {},
+      ...str(item.permanentLocationName ?? item.temporaryLocationName) ? { location: str(item.permanentLocationName ?? item.temporaryLocationName) } : {},
+      loanDate: libDate(log.loanDate) ?? libDate(item.checkoutDate),
+      dueDate,
+      renewed: num2(log.renewalCount) ?? num2(item.renewCount) ?? 0,
+      ...num2(policy.renewalCount) !== void 0 ? { renewMax: num2(policy.renewalCount) } : {},
+      overdue: daysLeft !== void 0 && daysLeft < 0,
+      ...daysLeft !== void 0 ? { daysLeft } : {}
+    };
+  }).sort((a, b) => (a.dueDate ?? "9").localeCompare(b.dueDate ?? "9"));
+}
+function parseHistory(json) {
+  const d = json?.data ?? {};
+  const list2 = d.list ?? [];
+  return {
+    total: num2(d.total) ?? list2.length,
+    loans: list2.map((row) => {
+      const inst = row.catalogueInstance ?? {};
+      return {
+        title: str(inst.title) ?? "\uFF08\u672A\u77E5\u4E66\u540D\uFF09",
+        ...str(inst.author) ? { author: str(inst.author) } : {},
+        ...str(inst.callNo) ? { callNo: str(inst.callNo) } : {},
+        loanDate: libDate(row.loanDate),
+        ...libDate(row.returnDate) ? { returnDate: libDate(row.returnDate) } : {}
+      };
+    })
+  };
+}
+function parseReader(json) {
+  const d = json?.data ?? {};
+  return {
+    canBorrow: num2(d.canLoanTotal),
+    overdue: num2(d.overdueTotal),
+    fees: num2(d.fees),
+    holds: num2(d.currentRequestCount),
+    ...libDate(d.expirationDate) ? { cardExpires: libDate(d.expirationDate) } : {}
+  };
+}
+async function readLoans(getJson, today) {
+  const [reader, loans] = await Promise.all([
+    getJson(`${LIB_API}/getReaderInfo`).then((r) => parseReader(body(r, "\u8BFB\u8005\u4FE1\u606F"))),
+    getJson(`${LIB_API}/getReaderCurrentLoan?pageSize=100&pageNo=1`).then((r) => parseCurrentLoans(body(r, "\u5F53\u524D\u501F\u9605"), today))
+  ]);
+  return { ...reader, count: loans.length, dueSoon: loans.filter((l) => !l.overdue && (l.daysLeft ?? 99) <= 7).length, loans };
+}
+async function readHistory(getJson, page, size) {
+  const qs = new URLSearchParams({ time: "", actionType: "", pageSize: String(size), pageNo: String(page) });
+  return { page, ...parseHistory(body(await getJson(`${LIB_API}/v2/getReaderHistoryLoan?${qs}`), "\u5386\u53F2\u501F\u9605")) };
+}
 
 // src/services/mail.ts
 import { ImapFlow } from "imapflow";
@@ -1613,15 +1748,15 @@ function parseNoticeDetail(html, pageUrl) {
   const $ = load5(html);
   $("script, style, noscript, nav, header, footer").remove();
   const hasContent = (x) => cleanText($(x).text()).length > 30 || $(x).find("[pdfsrc], iframe[src], embed[src], img").length > 0;
-  let body2;
+  let body3;
   for (const sel of BODY) {
     const el = $(sel).filter((_i, x) => hasContent(x)).first();
     if (el.length) {
-      body2 = el;
+      body3 = el;
       break;
     }
   }
-  if (!body2) {
+  if (!body3) {
     let best;
     let bestLen = 0;
     $("div, td, section").each((_i, x) => {
@@ -1634,7 +1769,7 @@ function parseNoticeDetail(html, pageUrl) {
         bestLen = len;
       }
     });
-    body2 = best ? $(best) : $("body");
+    body3 = best ? $(best) : $("body");
   }
   const base = new URL(pageUrl);
   const attachments = [];
@@ -1648,15 +1783,15 @@ function parseNoticeDetail(html, pageUrl) {
     } catch {
     }
   };
-  body2.find("a[href]").each((_i, x) => addFile($(x).attr("href"), cleanText($(x).text())));
-  body2.find("[pdfsrc]").each((_i, x) => addFile($(x).attr("pdfsrc"), /['"]title['"]\s*:\s*['"]([^'"]+)['"]/.exec($(x).attr("sudyfile-attr") ?? "")?.[1] ?? ""));
-  body2.find("iframe[src], embed[src]").each((_i, x) => addFile($(x).attr("src"), ""));
+  body3.find("a[href]").each((_i, x) => addFile($(x).attr("href"), cleanText($(x).text())));
+  body3.find("[pdfsrc]").each((_i, x) => addFile($(x).attr("pdfsrc"), /['"]title['"]\s*:\s*['"]([^'"]+)['"]/.exec($(x).attr("sudyfile-attr") ?? "")?.[1] ?? ""));
+  body3.find("iframe[src], embed[src]").each((_i, x) => addFile($(x).attr("src"), ""));
   if (!attachments.length) $("[pdfsrc], iframe[src], embed[src]").each((_i, x) => addFile($(x).attr("pdfsrc") ?? $(x).attr("src"), ""));
-  body2.find("br").replaceWith("\n");
-  body2.find("p, div, li, tr, h1, h2, h3, h4").each((_i, x) => {
+  body3.find("br").replaceWith("\n");
+  body3.find("p, div, li, tr, h1, h2, h3, h4").each((_i, x) => {
     $(x).append("\n");
   });
-  const text = body2.text().replace(/[ \t 　]+/g, " ").replace(/ *\n */g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  const text = body3.text().replace(/[ \t 　]+/g, " ").replace(/ *\n */g, "\n").replace(/\n{3,}/g, "\n\n").trim();
   const meta = cleanText($(".arti_metas, .article-info, .info, .time, .date, .news_meta, .arti-metas, .view-info").first().text());
   const labeled = cleanText($("body").text()).match(/(?:发布(?:日期|时间)|日期|时间)\s*[:：]\s*(20\d{2}\s*[-/.年]\s*\d{1,2}\s*[-/.月]\s*\d{1,2})/)?.[1];
   const title = cleanText($(".arti_title, .article-title, .news_title, .view-title, .art-tit h3, h1").first().text()) || cleanText($("title").text()).replace(/\s*[-|_].*$/, "");
@@ -2409,8 +2544,8 @@ var shanghaiIso = (y, mo, d, h = "0", mi = "0", s = "0") => new Date(Date.UTC(+y
 function parseCsrf(html) {
   return load6(html)('meta[name="_csrf"]').attr("content")?.trim() || void 0;
 }
-function parseConsumePage(body2) {
-  const inner = /<!\[CDATA\[([\s\S]*?)\]\]>/.exec(body2)?.[1] ?? body2;
+function parseConsumePage(body3) {
+  const inner = /<!\[CDATA\[([\s\S]*?)\]\]>/.exec(body3)?.[1] ?? body3;
   const $ = load6(inner);
   const pageText = $.root().text().replace(/\s+/g, "");
   const pages = /\d+\/(\d+)页/.exec(pageText)?.[1];
@@ -2431,10 +2566,10 @@ function parseConsumePage(body2) {
     const type = rest[1] ?? "";
     const merchant = rest[2] ?? "";
     const rawAmount = (rest[3] ?? "").replace(/[,，¥￥元\s]/g, "");
-    const num2 = /[-+]?\d+(?:\.\d+)?/.exec(rawAmount)?.[0];
-    if (num2 === void 0) return;
-    const value = Math.abs(Number(num2));
-    const signed = /^-/.test(num2) ? -value : /^\+/.test(num2) ? value : INCOME.test(type) ? value : -value;
+    const num3 = /[-+]?\d+(?:\.\d+)?/.exec(rawAmount)?.[0];
+    if (num3 === void 0) return;
+    const value = Math.abs(Number(num3));
+    const signed = /^-/.test(num3) ? -value : /^\+/.test(num3) ? value : INCOME.test(type) ? value : -value;
     records.push({ time: shanghaiIso(y, mo, d, h, mi, sec), type, merchant, amount: Math.round(signed * 100) / 100 });
   });
   return { records, pages: pages ? Number(pages) : void 0 };
@@ -2465,7 +2600,7 @@ async function readCardRecords(reader, range, opts = {}) {
       truncated = true;
       break;
     }
-    const body2 = new URLSearchParams({
+    const body3 = new URLSearchParams({
       aaxmlrequest: "true",
       pageNo: String(page),
       tabNo: "1",
@@ -2479,7 +2614,7 @@ async function readCardRecords(reader, range, opts = {}) {
     }).toString();
     const res = await reader.getText(CONSUME_QUERY, {
       method: "POST",
-      body: body2,
+      body: body3,
       headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "text/xml", Origin: ECARD, Referer: CONSUME_INDEX }
     });
     if (res.status >= 400) throw new FduError("UPSTREAM", `\u6821\u56ED\u5361\u7CFB\u7EDF\u8FD4\u56DE ${res.status}`);
@@ -2548,7 +2683,7 @@ var BOOKING = "https://booking.fudan.edu.cn";
 var SPORTS_TOPIC = 48;
 var SPORTS_PAGE = `${BOOKING}/reservation/fe/site/special/special?id=${SPORTS_TOPIC}`;
 var BOOKING_CAS = `https://id.fudan.edu.cn/authserver/login?service=${encodeURIComponent(`${BOOKING}/reservation/api/login/cas`)}`;
-function body(r, what) {
+function body2(r, what) {
   if (r.status === 412) throw new FduError("UPSTREAM", "\u9884\u7EA6\u7CFB\u7EDF\u62E6\u622A\u4E86\u8FD9\u6B21\u8BBF\u95EE\uFF08\u9632\u722C\u866B\u9A8C\u8BC1\u6CA1\u6709\u901A\u8FC7\uFF09\u3002", "\u7A0D\u540E\u518D\u8BD5\uFF1B\u4E00\u76F4\u4E0D\u884C\u7684\u8BDD\u8BF7\u76F4\u63A5\u5728\u6D4F\u89C8\u5668\u91CC\u6253\u5F00 booking.fudan.edu.cn \u67E5\u770B\u3002");
   let j;
   try {
@@ -2560,14 +2695,14 @@ function body(r, what) {
 }
 async function bookingReady(getJson) {
   try {
-    const j = body(await getJson(`${BOOKING}/reservation/api/topic/resource-list?id=${SPORTS_TOPIC}&pageSize=200`), "\u573A\u9986\u5217\u8868");
+    const j = body2(await getJson(`${BOOKING}/reservation/api/topic/resource-list?id=${SPORTS_TOPIC}&pageSize=200`), "\u573A\u9986\u5217\u8868");
     return j.e === "OK";
   } catch {
     return false;
   }
 }
 async function listVenues(getJson) {
-  const j = body(await getJson(`${BOOKING}/reservation/api/topic/resource-list?id=${SPORTS_TOPIC}&pageSize=200`), "\u573A\u9986\u5217\u8868");
+  const j = body2(await getJson(`${BOOKING}/reservation/api/topic/resource-list?id=${SPORTS_TOPIC}&pageSize=200`), "\u573A\u9986\u5217\u8868");
   if (j.e !== "OK") throw new FduError("UPSTREAM", `\u8BFB\u53D6\u573A\u9986\u5217\u8868\u5931\u8D25\uFF1A${j.m ?? "\u672A\u77E5\u539F\u56E0"}`);
   const rows = j.d?.data ?? [];
   return rows.flatMap((r) => r.base?.id !== void 0 && r.base?.name ? [{ id: String(r.base.id), name: String(r.base.name) }] : []);
@@ -2582,7 +2717,7 @@ function matchVenues(venues, query) {
 async function venueCalendar(getJson, venueId, from, to) {
   if (!/^\d+$/.test(venueId)) throw new FduError("BAD_ARGS", "\u573A\u9986 id \u5E94\u8BE5\u662F\u6570\u5B57\uFF08\u6765\u81EA fdu venue list\uFF09\u3002");
   const qs = new URLSearchParams({ id: venueId, collective: "0", date: JSON.stringify({ start_date: from, end_date: to }) });
-  const j = body(await getJson(`${BOOKING}/reservation/site/resource/calendar?${qs}`), "\u573A\u9986\u65E5\u5386");
+  const j = body2(await getJson(`${BOOKING}/reservation/site/resource/calendar?${qs}`), "\u573A\u9986\u65E5\u5386");
   if (j.e !== "OK") throw new FduError("UPSTREAM", `\u8BFB\u53D6\u573A\u9986\u7A7A\u95F2\u65F6\u6BB5\u5931\u8D25\uFF1A${j.m ?? "\u672A\u77E5\u539F\u56E0"}`);
   const d = j.d ?? {};
   const times = d.time ?? [];
@@ -2852,6 +2987,68 @@ async function withBooking(ctx, work) {
   }, { headless: true, timeoutMs: 6e4, platform: "jwfw" });
   if (failure) throw failure;
   if (!result) throw new FduError("UPSTREAM", "\u573A\u9986\u9884\u7EA6\u7CFB\u7EDF\u6CA1\u6709\u6253\u5F00\u3002", "\u7A0D\u540E\u518D\u8BD5\uFF1B\u4E5F\u53EF\u4EE5\u76F4\u63A5\u5728\u6D4F\u89C8\u5668\u91CC\u6253\u5F00 booking.fudan.edu.cn \u67E5\u770B\u3002");
+  return result.value;
+}
+function findLibraryToken(entries) {
+  const plausible = (v) => typeof v === "string" && /^[\w.\-]{20,}$/.test(v);
+  const dig = (o, depth = 0) => {
+    if (!o || typeof o !== "object" || depth > 4) return void 0;
+    for (const [k, v] of Object.entries(o)) {
+      if (/^(access_?token|accessToken|token)$/i.test(k) && plausible(v)) return v;
+      const inner = dig(v, depth + 1);
+      if (inner) return inner;
+    }
+    return void 0;
+  };
+  const ranked = [...entries].sort(([a], [b]) => Number(/access/i.test(b)) - Number(/access/i.test(a)));
+  for (const [k, v] of ranked) {
+    if (!/token/i.test(k) && !/token/i.test(v.slice(0, 200))) continue;
+    if (/token/i.test(k) && plausible(v.replace(/^"|"$/g, ""))) return v.replace(/^"|"$/g, "");
+    try {
+      const t = dig(JSON.parse(v));
+      if (t) return t;
+    } catch {
+    }
+  }
+  return void 0;
+}
+async function storageEntries(page) {
+  return page.evaluate(`(() => {
+    const out = [];
+    for (const st of [window.localStorage, window.sessionStorage]) {
+      try { for (let i = 0; i < st.length; i++) { const k = st.key(i); out.push([k, st.getItem(k) || '']); } } catch {}
+    }
+    return out;
+  })()`).then((v) => Array.isArray(v) ? v : []).catch(() => []);
+}
+var LIB_LOGIN_HINT = "\u8FD0\u884C `fdu library login`\uFF0C\u5728\u6253\u5F00\u7684\u56FE\u4E66\u9986\u9875\u9762\u91CC\u767B\u5F55\u4E00\u6B21\uFF08\u4E4B\u540E\u4F1A\u8BB0\u4F4F\uFF09\u3002";
+async function withLibrary(ctx, work) {
+  if (!ctx.session.hasState()) throw new NeedLoginError("jwfw");
+  const started = Date.now();
+  let result;
+  let failure;
+  await ctx.session.withPage(OPAC, async (page) => {
+    if (new URL(page.url()).hostname !== "opac.fudan.edu.cn") return false;
+    const token = findLibraryToken(await storageEntries(page));
+    if (!token) {
+      if (Date.now() - started < 1e4) return false;
+      failure = new FduError("NEED_LOGIN", "\u8FD8\u6CA1\u6709\u767B\u5F55\u56FE\u4E66\u9986\u3002", LIB_LOGIN_HINT);
+      return true;
+    }
+    const getJson = (url) => page.evaluate(async ([u, t]) => {
+      const r = await fetch(u, { headers: { access_token: t, Accept: "application/json" } });
+      return { status: r.status, text: await r.text() };
+    }, [url, token]);
+    try {
+      result = { value: await work(getJson) };
+    } catch (e) {
+      if (e instanceof Error && /Execution context was destroyed|navigat/i.test(e.message)) return false;
+      failure = e;
+    }
+    return true;
+  }, { headless: true, timeoutMs: 4e4, platform: "jwfw" });
+  if (failure) throw failure;
+  if (!result) throw new FduError("UPSTREAM", "\u56FE\u4E66\u9986\u9875\u9762\u6CA1\u6709\u6253\u5F00\u3002", "\u7A0D\u540E\u518D\u8BD5\uFF1B\u4E5F\u53EF\u4EE5\u76F4\u63A5\u6253\u5F00 opac.fudan.edu.cn \u67E5\u770B\u3002");
   return result.value;
 }
 function overviewDeps(ctx) {
@@ -3262,6 +3459,22 @@ var OPS = [
     }
   }),
   op({
+    name: "jw.lessons",
+    summary: "\u5168\u6821\u5F00\u8BFE\u67E5\u8BE2\uFF1A\u6309\u8BFE\u7A0B\u540D\u641C\u67D0\u5B66\u671F\u5F00\u7684\u8BFE\uFF08\u6559\u5B66\u73ED\u4EE3\u7801\u3001\u5B66\u5206\u3001\u4EFB\u8BFE\u8001\u5E08\u3001\u4E0A\u8BFE\u65F6\u95F4\u5730\u70B9\u3001\u9650\u9009\u548C\u5DF2\u9009\u4EBA\u6570\u3001\u8003\u8BD5\u65B9\u5F0F\uFF09\uFF0C\u9009\u8BFE\u65F6\u7528\u3002",
+    login: "uis",
+    effect: "read",
+    params: {
+      keyword: z.string().min(1).describe("\u8BFE\u7A0B\u540D\uFF08\u5305\u542B\u5373\u53EF\uFF09\uFF0C\u5982\u300C\u6570\u636E\u7ED3\u6784\u300D"),
+      semester: z.string().optional().describe("\u5B66\u671F id \u6216\u540D\u79F0\u5173\u952E\u8BCD\uFF0C\u9ED8\u8BA4\u5F53\u524D\u5B66\u671F"),
+      page: int2("\u7B2C\u51E0\u9875\uFF0C\u9ED8\u8BA4 1", 1, 500),
+      size: int2("\u6BCF\u9875\u51E0\u6761\uFF0C\u9ED8\u8BA4 20", 1, 100)
+    },
+    examples: ["fdu jw lessons --keyword \u6570\u636E\u7ED3\u6784", "fdu jw lessons --keyword \u7EBF\u6027\u4EE3\u6570 --semester 2026-2027\u5B66\u5E742\u5B66\u671F"],
+    async run(ctx, a) {
+      return readLessons(ctx.session.reader("jwfw"), { keyword: a.keyword, semester: a.semester, page: a.page, size: a.size });
+    }
+  }),
+  op({
     name: "jw.selected",
     summary: "\u9009\u8BFE\u7ED3\u679C\uFF1A\u67D0\u5B66\u671F\u5DF2\u9009\u4E0A\u7684\u8BFE\u3001\u5B66\u5206\u548C\u4E0A\u8BFE\u65F6\u95F4\u3002",
     login: "uis",
@@ -3449,6 +3662,55 @@ var OPS = [
         const r = await ctx.session.raw(url, { method: "POST" });
         return { status: r.status, text: r.text };
       });
+    }
+  }),
+  op({
+    name: "library.login",
+    summary: "\u767B\u5F55\u56FE\u4E66\u9986\u300C\u6211\u7684\u501F\u9605\u300D\uFF1A\u6253\u5F00\u56FE\u4E66\u9986\u9875\u9762\uFF0C\u70B9\u300C\u767B\u5F55\u300D\uFF08\u8D70\u7EDF\u4E00\u8EAB\u4EFD\u8BA4\u8BC1\uFF0C\u5DF2\u767B\u5F55\u590D\u65E6\u8D26\u53F7\u65F6\u4E00\u822C\u4E0D\u7528\u518D\u8F93\u5BC6\u7801\uFF09\uFF0C\u770B\u5230\u501F\u9605\u4FE1\u606F\u540E\u7A97\u53E3\u4F1A\u81EA\u52A8\u5173\u95ED\u3002",
+    login: "none",
+    effect: "auth",
+    mcp: false,
+    params: {},
+    async run(ctx) {
+      let ok = false;
+      let listening = false;
+      ctx.log("\u5DF2\u6253\u5F00\u56FE\u4E66\u9986\u9875\u9762\uFF1A\u8BF7\u70B9\u53F3\u4E0A\u89D2\u300C\u767B\u5F55\u300D\uFF0C\u767B\u5F55\u540E\u8FDB\u5165\u300C\u6211\u7684\u501F\u9605\u300D\uFF0C\u770B\u5230\u501F\u9605\u4FE1\u606F\u540E\u7A97\u53E3\u4F1A\u81EA\u52A8\u5173\u95ED\u3002");
+      await ctx.session.withPage(OPAC, async (page) => {
+        if (!listening) {
+          listening = true;
+          page.on("response", (res) => {
+            if (!res.url().includes("fdulspgw.fudan.edu.cn/alsp/open-api/elib5/") || res.status() !== 200) return;
+            if (res.request().headers().access_token) ok = true;
+          });
+        }
+        return ok;
+      }, { headless: false, timeoutMs: 3e5 });
+      if (!ok) throw new FduError("NEED_LOGIN", "\u6CA1\u6709\u5B8C\u6210\u56FE\u4E66\u9986\u767B\u5F55\u3002", "\u91CD\u65B0\u8FD0\u884C `fdu library login`\uFF0C\u767B\u5F55\u540E\u70B9\u5F00\u300C\u6211\u7684\u501F\u9605\u300D\u3002");
+      await ctx.session.save();
+      return { loggedIn: true };
+    }
+  }),
+  op({
+    name: "library.loans",
+    summary: "\u56FE\u4E66\u9986\u5728\u501F\u7684\u4E66\uFF1A\u4E66\u540D\u3001\u4F5C\u8005\u3001\u7D22\u4E66\u53F7\u3001\u9986\u85CF\u5730\u3001\u501F\u9605\u65E5\u671F\u3001\u5E94\u8FD8\u65E5\u671F\u3001\u8FD8\u5269\u51E0\u5929\u3001\u7EED\u501F\u6B21\u6570\uFF1B\u4EE5\u53CA\u8FD8\u80FD\u501F\u51E0\u672C\u3001\u903E\u671F\u51E0\u672C\u3001\u6B20\u8D39\u3002\u53EA\u770B\uFF0C\u4E0D\u7EED\u501F\u3002",
+    login: "uis",
+    effect: "read",
+    sensitive: true,
+    params: {},
+    examples: ["fdu library loans"],
+    async run(ctx) {
+      return withLibrary(ctx, (getJson) => readLoans(getJson, shanghaiDay(ctx.now())));
+    }
+  }),
+  op({
+    name: "library.history",
+    summary: "\u56FE\u4E66\u9986\u501F\u9605\u5386\u53F2\uFF08\u4E66\u540D\u3001\u4F5C\u8005\u3001\u501F\u9605\u548C\u5F52\u8FD8\u65E5\u671F\uFF09\uFF0C\u6309\u9875\u8BFB\u53D6\u3002",
+    login: "uis",
+    effect: "read",
+    sensitive: true,
+    params: { page: int2("\u7B2C\u51E0\u9875\uFF0C\u9ED8\u8BA4 1", 1, 1e3), size: int2("\u6BCF\u9875\u51E0\u6761\uFF0C\u9ED8\u8BA4 20", 1, 100) },
+    async run(ctx, a) {
+      return withLibrary(ctx, (getJson) => readHistory(getJson, a.page ?? 1, a.size ?? 20));
     }
   }),
   op({

@@ -26,12 +26,12 @@ fdu mcp                        # 以 MCP 服务运行
 | 校历 | `fdu jw week` | 第几教学周、星期几、是否放假（按学校校历） |
 | 日历 | `fdu calendar export` | 导出 .ics：每次课、考试、作业截止（含提醒），重复导入不会重复添加 |
 | eLearning | `fdu elearning courses / assignments / todo / announcements / files / download` | 课程、作业和截止时间、公告、课件列表和下载 |
-| 教务系统 | `fdu jw semesters / timetable / exams / grades / gpa / program / selected` | 课表（含研究生）、考试、成绩和绩点、排名、培养方案完成情况、选课结果 |
+| 教务系统 | `fdu jw semesters / timetable / exams / grades / gpa / program / selected / lessons` | 课表（含研究生）、考试、成绩和绩点、排名、培养方案完成情况、选课结果、全校开课查询 |
 | iCourse 课程回放 | `fdu icourse search / terms / lectures / transcript` | 找课程、列出每一讲和有没有回放、读课堂文字稿（自动转写，带时间）；学校审核期内的回放如实说明未开放 |
 | 校园卡 | `fdu card balance`、`fdu card transactions` | 余额；消费记录和统计（总支出、日均、按商户和餐次） |
 | 体育场馆 | `fdu venue list`、`fdu venue free` | 各场馆每个时段还有哪些场地空着（只看，不预约） |
 | 宿舍 | `fdu dorm electricity` | 剩余电量 |
-| 图书馆 | `fdu library seats / search` | 各馆在馆人数；文献检索（不用登录） |
+| 图书馆 | `fdu library seats / search / loans / history` | 各馆在馆人数、文献检索（不用登录）；在借的书和应还日期、借阅历史（第一次先 `fdu library login`） |
 | 学校通知 | `fdu notices sources / list / read` | 教务处、研究生院、各院系官网通知（不用登录） |
 | 树洞、旦克 | `fdu hole search / read / latest`，`fdu danke search / reviews` | 树洞帖子、课程评价（需要树洞账号；校外自动走 WebVPN） |
 | 学生邮箱 | `fdu mail list / read` | 收件箱（IMAP 只读，需要客户端专用密码） |
@@ -145,7 +145,7 @@ args = ["mcp"]
 
 ## 隐私
 
-- 成绩、绩点、培养方案、校园卡消费记录、邮件标成了隐私数据（`fdu services` 里 `sensitive: true`）。技能会提醒编程助理：只用来回答你本人的问题，不写进代码仓库、提交信息或别的服务。
+- 成绩、绩点、培养方案、校园卡消费记录、图书馆借阅、邮件标成了隐私数据（`fdu services` 里 `sensitive: true`）。技能会提醒编程助理：只用来回答你本人的问题，不写进代码仓库、提交信息或别的服务。
 - 这些数据只在你的电脑和学校系统之间传输；交给哪个 AI 模型由你使用的编程助理决定。
 - 不想让助理看到某类数据时，就不要在它里面登录对应的账号，或者用 `--profile` 分开。
 

@@ -79,3 +79,69 @@ export async function readExams(reader: CampusReader, opts: { all?: boolean; now
     .filter((e) => opts.all || Date.parse(e.endsAt ?? e.startsAt) > now - 30 * 86_400_000)
     .sort((a, b) => a.startsAt.localeCompare(b.startsAt));
 }
+
+// ---------------- 全校开课查询 ----------------
+
+const LESSON_SEARCH = 'https://fdjwgl.fudan.edu.cn/student/for-std/lesson-search';
+
+export interface Lesson {
+  /** 教学班代码，如 COMP130004.01 */
+  code: string;
+  course: string;
+  courseCode?: string;
+  credits?: number;
+  teachers: string[];
+  /** 上课时间、地点、教师（教务系统原文） */
+  schedule?: string;
+  department?: string;
+  /** 限选人数 / 已选人数 */
+  limit?: number;
+  selected?: number;
+  examMode?: string;
+  language?: string;
+  courseType?: string;
+}
+
+type Named = { nameZh?: unknown } | null | undefined;
+const nameOf = (x: Named) => (x && typeof x.nameZh === 'string' && x.nameZh.trim() ? x.nameZh.trim() : undefined);
+const numOf = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+
+export function parseLessons(body: string): { lessons: Lesson[]; page: number; pages: number; total: number } {
+  let j: { data?: unknown[]; _page_?: { currentPage?: unknown; totalPages?: unknown; totalRows?: unknown } };
+  try { j = JSON.parse(body); } catch { throw new TimetableFormatError('全校开课查询返回的格式和预期不同，学校页面可能更新了。'); }
+  const rows = (Array.isArray(j.data) ? j.data : []) as Record<string, unknown>[];
+  const lessons = rows.map((r): Lesson => {
+    const course = (r.course ?? {}) as { code?: unknown; nameZh?: unknown; credits?: unknown };
+    const teachers = ((r.teacherAssignmentList ?? []) as { person?: Named }[]).map((t) => nameOf(t.person)).filter((x): x is string => !!x);
+    const schedule = ((r.scheduleText as { dateTimePlacePersonText?: { textZh?: unknown } } | undefined)?.dateTimePlacePersonText?.textZh);
+    return {
+      code: String(r.code ?? ''),
+      course: nameOf(course as Named) ?? nameOf(r as Named) ?? '',
+      ...(typeof course.code === 'string' ? { courseCode: course.code } : {}),
+      ...(numOf(course.credits) !== undefined ? { credits: numOf(course.credits) } : {}),
+      teachers: [...new Set(teachers)],
+      ...(typeof schedule === 'string' && schedule.trim() ? { schedule: schedule.replace(/\s+/g, ' ').trim() } : {}),
+      ...(nameOf(r.openDepartment as Named) ? { department: nameOf(r.openDepartment as Named) } : {}),
+      ...(numOf(r.limitCount) !== undefined ? { limit: numOf(r.limitCount) } : {}),
+      ...(numOf(r.stdCount) !== undefined ? { selected: numOf(r.stdCount) } : {}),
+      ...(nameOf(r.examMode as Named) ? { examMode: nameOf(r.examMode as Named) } : {}),
+      ...(nameOf(r.teachLang as Named) ? { language: nameOf(r.teachLang as Named) } : {}),
+      ...(nameOf(r.courseType as Named) ? { courseType: nameOf(r.courseType as Named) } : {}),
+    };
+  });
+  const p = j._page_ ?? {};
+  return { lessons, page: Number(p.currentPage ?? 1) || 1, pages: Number(p.totalPages ?? 1) || 1, total: Number(p.totalRows ?? lessons.length) || lessons.length };
+}
+
+/** 全校开课查询：按课程名搜索某学期开的课（默认当前学期） */
+export async function readLessons(reader: CampusReader, opts: { keyword: string; semester?: string; page?: number; size?: number }) {
+  const { semesters, currentId } = await readSemesters(reader);
+  const want = opts.semester?.trim();
+  const semester = want ? semesters.find((s) => s.id === want) ?? semesters.find((s) => s.name.includes(want)) : semesters.find((s) => s.id === currentId) ?? semesters[0];
+  if (!semester) throw Object.assign(new Error(`没有找到学期「${want}」，用 fdu jw semesters 查看学期列表。`), { code: 'NOT_FOUND' });
+  const { studentId } = await readStudentId(reader);
+  const qs = new URLSearchParams({ queryPage__: `${opts.page ?? 1},${opts.size ?? 20}`, courseNameZhLike: opts.keyword });
+  const res = await reader.getText(`${LESSON_SEARCH}/semester/${semester.id}/search/${studentId}?${qs}`, { headers: { 'X-Requested-With': 'XMLHttpRequest', Accept: 'application/json' } });
+  if (res.status >= 400) throw new Error(`教务系统返回 ${res.status}`);
+  return { semester: semester.name, keyword: opts.keyword, ...parseLessons(res.text) };
+}
