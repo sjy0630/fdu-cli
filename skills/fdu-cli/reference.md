@@ -325,6 +325,26 @@ fdu icourse transcript --course 12345 --lecture 67890 --offset 30000
 
 登录：复旦账号 · 只读 · MCP：`card_balance`
 
+### `fdu card transactions`
+
+校园卡消费记录（时间、类型、商户、金额；支出为负）和统计：总支出、充值、日均、按商户和餐次。默认最近 7 天。
+
+登录：复旦账号 · 只读 · **隐私数据** · MCP：`card_transactions`
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `--days` | integer |  | 最近几天（含今天），默认 7 |
+| `--from` | string |  | 开始日期 YYYY-MM-DD（和 --days 二选一） |
+| `--to` | string |  | 结束日期，默认今天 |
+| `--limit` | integer |  | 最多返回几条明细，默认 100（统计按全部记录算） |
+| `--merchant` | string |  | 只看商户名包含这个词的，如「食堂」「北区」 |
+
+```bash
+fdu card transactions
+fdu card transactions --days 30 --limit 0
+fdu card transactions --from 2026-10-01 --to 2026-10-31
+```
+
 ## 宿舍
 
 ### `fdu dorm electricity`

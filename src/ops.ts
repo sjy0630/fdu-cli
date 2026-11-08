@@ -23,6 +23,7 @@ import { buildIcs, type IcsEvent } from './services/ics';
 import { runDoctor } from './services/doctor';
 import { clock, IcourseClient, type TranscriptSegment } from './services/icourse';
 import { NeedLoginError } from './core/fudan-auth';
+import { cardRange, readCardRecords, summarize } from './services/ecard';
 import { proxyFromEnv } from './core/session';
 
 /** 运行一个操作时能用到的东西 */
@@ -520,6 +521,30 @@ export const OPS: Op[] = [
   op({
     name: 'card.balance', summary: '校园卡余额。', login: 'uis', effect: 'read', params: {},
     async run(ctx) { return { balance: await readCardBalance(ctx.session.reader('jwfw')), at: new Date(ctx.now()).toISOString() }; },
+  }),
+  op({
+    name: 'card.transactions', summary: '校园卡消费记录（时间、类型、商户、金额；支出为负）和统计：总支出、充值、日均、按商户和餐次。默认最近 7 天。', login: 'uis', effect: 'read', sensitive: true,
+    params: {
+      days: int('最近几天（含今天），默认 7', 1, 366),
+      from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('开始日期 YYYY-MM-DD（和 --days 二选一）'),
+      to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('结束日期，默认今天'),
+      limit: int('最多返回几条明细，默认 100（统计按全部记录算）', 0, 2000),
+      merchant: z.string().optional().describe('只看商户名包含这个词的，如「食堂」「北区」'),
+    },
+    examples: ['fdu card transactions', 'fdu card transactions --days 30 --limit 0', 'fdu card transactions --from 2026-10-01 --to 2026-10-31'],
+    async run(ctx, a) {
+      const range = cardRange(ctx.now(), { days: a.days, from: a.from, to: a.to });
+      const { records, truncated } = await readCardRecords(ctx.session.reader('jwfw'), range);
+      const picked = a.merchant ? records.filter((r) => r.merchant.includes(a.merchant!)) : records;
+      const limit = a.limit ?? 100;
+      return {
+        ...range,
+        summary: summarize(picked),
+        records: picked.slice(0, limit).map((r) => ({ ...r, timeShanghai: shanghaiDate(r.time) })),
+        ...(picked.length > limit ? { note: `只列出最新 ${limit} 条明细，统计按全部 ${picked.length} 条计算；要全部明细用 --limit ${Math.min(2000, picked.length)}。` } : {}),
+        ...(truncated ? { truncated: true, note: '记录太多，只读了最近的一部分；缩短日期范围可以读全。' } : {}),
+      };
+    },
   }),
   op({
     name: 'dorm.electricity', summary: '宿舍剩余电量（度）。', login: 'uis', effect: 'read', params: {},

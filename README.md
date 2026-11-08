@@ -28,7 +28,7 @@ fdu mcp                        # 以 MCP 服务运行
 | eLearning | `fdu elearning courses / assignments / todo / announcements / files / download` | 课程、作业和截止时间、公告、课件列表和下载 |
 | 教务系统 | `fdu jw semesters / timetable / exams / grades / gpa / program / selected` | 课表（含研究生）、考试、成绩和绩点、排名、培养方案完成情况、选课结果 |
 | iCourse 课程回放 | `fdu icourse search / terms / lectures / transcript` | 找课程、列出每一讲和有没有回放、读课堂文字稿（自动转写，带时间）；学校审核期内的回放如实说明未开放 |
-| 校园卡 | `fdu card balance` | 余额 |
+| 校园卡 | `fdu card balance`、`fdu card transactions` | 余额；消费记录和统计（总支出、日均、按商户和餐次） |
 | 宿舍 | `fdu dorm electricity` | 剩余电量 |
 | 图书馆 | `fdu library seats / search` | 各馆在馆人数；文献检索（不用登录） |
 | 学校通知 | `fdu notices sources / list / read` | 教务处、研究生院、各院系官网通知（不用登录） |
@@ -140,7 +140,7 @@ args = ["mcp"]
 
 ## 隐私
 
-- 成绩、绩点、培养方案、邮件标成了隐私数据（`fdu services` 里 `sensitive: true`）。技能会提醒编程助理：只用来回答你本人的问题，不写进代码仓库、提交信息或别的服务。
+- 成绩、绩点、培养方案、校园卡消费记录、邮件标成了隐私数据（`fdu services` 里 `sensitive: true`）。技能会提醒编程助理：只用来回答你本人的问题，不写进代码仓库、提交信息或别的服务。
 - 这些数据只在你的电脑和学校系统之间传输；交给哪个 AI 模型由你使用的编程助理决定。
 - 不想让助理看到某类数据时，就不要在它里面登录对应的账号，或者用 `--profile` 分开。
 
