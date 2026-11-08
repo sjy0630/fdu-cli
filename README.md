@@ -4,11 +4,15 @@
 
 ```bash
 fdu login                      # 打开浏览器，登录复旦统一身份认证（一次即可）
+fdu today                      # 今天的课、快到期的作业、考试
+fdu week                       # 这一周的安排，第几教学周
 fdu todo --days 7              # 这周要交、还没交的作业
 fdu jw timetable               # 本学期课表
 fdu jw exams                   # 考试安排
 fdu elearning files --course 线性代数 --search 第5讲
 fdu library search --query "graph neural network" --year-from 2022
+fdu calendar export            # 课表、考试、作业截止时间导出成 .ics，导入日历软件
+fdu doctor                     # 出问题时先跑这个
 fdu mcp                        # 以 MCP 服务运行
 ```
 
@@ -18,6 +22,9 @@ fdu mcp                        # 以 MCP 服务运行
 
 | 服务 | 命令 | 说明 |
 |---|---|---|
+| 汇总 | `fdu today`、`fdu week` | 当天 / 当周的课（按教学周和放假安排筛好）、要交的作业、考试；某类读不到时其他照常返回 |
+| 校历 | `fdu jw week` | 第几教学周、星期几、是否放假（按学校校历） |
+| 日历 | `fdu calendar export` | 导出 .ics：每次课、考试、作业截止（含提醒），重复导入不会重复添加 |
 | eLearning | `fdu elearning courses / assignments / todo / announcements / files / download` | 课程、作业和截止时间、公告、课件列表和下载 |
 | 教务系统 | `fdu jw semesters / timetable / exams / grades / gpa / program / selected` | 课表（含研究生）、考试、成绩和绩点、排名、培养方案完成情况、选课结果 |
 | 校园卡 | `fdu card balance` | 余额 |
@@ -73,8 +80,9 @@ fdu mail setup --user 学号@m.fudan.edu.cn    # 学生邮箱：输入网页邮�
 | `state.json` | 统一身份认证登录后的 Cookie（不含密码） |
 | `hole.json` | 树洞令牌 |
 | `mail.json` | 邮箱 IMAP 配置和客户端专用密码（**明文**） |
+| `cache/` | 查询结果的缓存（含成绩等，和上面一样只有你能读） |
 
-这些文件能代表你登录学校系统：不要同步到网盘、提交到仓库或发给别人。`fdu logout`、`fdu hole logout`、`fdu mail forget` 分别删除。
+这些文件能代表你登录学校系统：不要同步到网盘、提交到仓库或发给别人。`fdu logout`（同时清空缓存）、`fdu hole logout`、`fdu mail forget`、`fdu cache clear` 分别删除。
 
 ## 接入 Claude Code
 
@@ -122,6 +130,12 @@ args = ["mcp"]
 | 3 | 需要登录或配置（`NEED_LOGIN` / `NEED_HOLE_LOGIN` / `NEED_MAIL_SETUP`） |
 
 时间都是 ISO 格式（UTC，末尾 Z），常用字段另附 `*Shanghai`（北京时间）。加 `--compact` 输出单行 JSON。
+
+**缓存**：只读查询成功后结果存在本机。加 `--cached` 不联网，直接返回上次的结果（带 `cachedAt`）；联网失败（没登录、学校系统出错）时，错误里会附上上次的结果 `"cached": {"at": ..., "data": ...}`，先凑合用。
+
+**遇到问题**：先运行 `fdu doctor`，它检查 Node.js、浏览器、配置目录、能不能连上各个学校系统和各账号的登录状态，每一项都给出修复办法。结果里没有账号和 Cookie，可以直接发给别人帮忙看。
+
+**教学周**按学校校历计算（一周从周日开始，第 0 周是报到注册周）。内置了 2026—2027 学年的校历；之后的学期按教务系统里学期的开始日期推算，节假日以学校通知为准。
 
 ## 隐私
 

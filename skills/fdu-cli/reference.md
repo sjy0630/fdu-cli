@@ -5,8 +5,10 @@
 所有命令输出 JSON：成功是 `{"ok":true,"op":...,"data":...}`，失败是 `{"ok":false,"error":{"code","message","hint"}}`。
 退出码：0 成功，2 参数错误，3 需要登录或配置（`NEED_LOGIN` / `NEED_HOLE_LOGIN` / `NEED_MAIL_SETUP`），1 其他错误。
 MCP 工具名是把命令里的点换成下划线，如 `jw.grades` → `jw_grades`。
+简写：`fdu login` / `logout` / `status` / `doctor` / `today` / `week` / `todo`。
+只读查询的结果会缓存在本机：加 `--cached` 不联网直接返回上次的结果（带 `cachedAt`）；联网失败时，错误里附上上次的结果 `cached: {at, data}`。
 
-## 账号
+## 账号与环境
 
 ### `fdu auth login`
 
@@ -35,6 +37,76 @@ fdu login --webvpn
 删除本机保存的复旦账号登录状态（树洞、邮箱分别用 fdu hole logout、fdu mail forget）。
 
 登录：不用 · 登录 / 退出 · 仅命令行
+
+### `fdu auth doctor`
+
+检查运行环境：Node.js、浏览器、配置目录、能不能连上各个学校系统、各账号的登录状态，每项给出修复建议（结果里没有账号和 Cookie，可以直接发给别人帮忙看）。
+
+登录：不用 · 只读 · MCP：`auth_doctor`
+
+```bash
+fdu doctor
+```
+
+## 缓存
+
+### `fdu cache clear`
+
+删除本机缓存的查询结果（退出登录时也会自动删除）。
+
+登录：不用 · 会写本机文件 · 仅命令行
+
+## 汇总
+
+### `fdu overview today`
+
+今天的概况：今天的课（按教学周和放假安排筛好）、3 天内要交还没交的作业、7 天内的考试、过了截止还没交的作业。某一类读不到时其他照常返回，读不到的写在 errors 里。
+
+登录：复旦账号 · 只读 · MCP：`overview_today`
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `--date` | string |  | 日期 YYYY-MM-DD，默认今天 |
+
+```bash
+fdu today
+fdu today --date 2026-11-09
+```
+
+### `fdu overview week`
+
+这一周（按校历从周日到周六）每天的课、本周要交的作业、本周的考试，以及第几教学周。
+
+登录：复旦账号 · 只读 · MCP：`overview_week`
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `--date` | string |  | 这一周里的任意一天，默认今天 |
+
+```bash
+fdu week
+fdu week --date 2026-11-16
+```
+
+## 日历
+
+### `fdu calendar export`
+
+把课表、考试和作业截止时间导出成日历文件（.ics），可以导入苹果日历、Outlook、Google 日历。重复导入同一学期会更新已有日程，不会重复添加。
+
+登录：复旦账号 · 会写本机文件 · MCP：`calendar_export`
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `--out` | string |  | 保存到哪里，默认当前目录的 fudan.ics |
+| `--include` | string |  | 导出哪些，逗号分隔：timetable,exams,assignments（默认全部） |
+| `--overwrite` | boolean |  | 文件已存在时覆盖（默认另存为新文件名） |
+| `--alarms` | boolean |  | 考试和作业截止前一天提醒（默认开） |
+
+```bash
+fdu calendar export
+fdu calendar export --include timetable,exams --out ~/Desktop/fudan.ics
+```
 
 ## eLearning
 
@@ -114,6 +186,16 @@ fdu elearning files --course 线性代数 --search 第5讲
 教务系统里的学期列表（id、名称）和当前学期。
 
 登录：复旦账号 · 只读 · MCP：`jw_semesters`
+
+### `fdu jw week`
+
+某天是第几教学周、星期几、是否放假（按学校校历；校历没覆盖到的学期按教务系统的学期开始日期推算）。
+
+登录：不用 · 只读 · MCP：`jw_week`
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `--date` | string |  | 日期 YYYY-MM-DD，默认今天 |
 
 ### `fdu jw timetable`
 

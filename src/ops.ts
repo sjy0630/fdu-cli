@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { basename, extname, join, resolve } from 'node:path';
+import { accessSync, constants as fsConstants, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
+import { basename, dirname, extname, join, resolve } from 'node:path';
 import { z } from 'zod';
 import { ensureWebvpn, login, platformStatus, sessionAuth, webvpnAlive } from './core/auth';
+import type { Cache } from './core/cache';
 import { FduError } from './core/errors';
 import type { Session } from './core/session';
 import type { Store } from './core/store';
@@ -16,6 +17,11 @@ import { DEFAULT_FUDAN_STUDENT_IMAP, ImapMailClient } from './services/mail';
 import { parseNoticeDetail, parseNoticeList } from './services/notice-parse';
 import { findNoticeSource, NOTICE_SOURCES } from './services/notice-sources';
 import { TreeholeClient, type HoleTokens } from './services/treehole';
+import { shanghaiDay, weekInfo } from './services/calendar';
+import { allSessions, overview, todayRange, weekRange, type OverviewDeps } from './services/overview';
+import { buildIcs, type IcsEvent } from './services/ics';
+import { runDoctor } from './services/doctor';
+import { proxyFromEnv } from './core/session';
 
 /** 运行一个操作时能用到的东西 */
 export interface Ctx {
@@ -27,6 +33,8 @@ export interface Ctx {
   prompt?(question: string, opts?: { hidden?: boolean }): Promise<string>;
   cwd: string;
   now(): number;
+  /** 查询结果缓存（没有时不缓存） */
+  cache?: Cache;
 }
 
 export type Effect = 'read' | 'local-write' | 'auth';
@@ -45,6 +53,8 @@ export interface Op {
   /** 需要在终端里输入密码的操作不开放给 MCP */
   mcp?: boolean;
   examples?: string[];
+  /** 只读操作默认缓存结果（--cached、失败时附带上次结果）；false 表示不缓存 */
+  cache?: boolean;
   run(ctx: Ctx, args: Record<string, unknown>): Promise<unknown>;
 }
 
@@ -128,6 +138,16 @@ function mailClient(ctx: Ctx): ImapMailClient {
   return new ImapMailClient(cfg);
 }
 
+/** 汇总和导出日历用的三类数据 */
+function overviewDeps(ctx: Ctx): OverviewDeps {
+  const reader = ctx.session.reader('jwfw');
+  return {
+    timetable: () => readTimetable(reader),
+    exams: () => readExams(reader, { now: ctx.now() }),
+    assignments: async () => (await assignmentsOf(ctx, await resolveCourses(ctx))).map((x) => ({ name: x.name, course: x.course, dueAt: x.dueAt, done: x.done, htmlUrl: x.htmlUrl })),
+  };
+}
+
 const needPrompt = (ctx: Ctx) => {
   if (!ctx.prompt) throw new FduError('BAD_ARGS', '这个操作需要在终端里输入密码，请直接在终端运行。');
   return ctx.prompt;
@@ -147,7 +167,7 @@ export const OPS: Op[] = [
     },
   }),
   op({
-    name: 'auth.status', summary: '各系统的登录状态（复旦账号、WebVPN、树洞、学生邮箱）。', login: 'none', effect: 'read', params: {},
+    name: 'auth.status', summary: '各系统的登录状态（复旦账号、WebVPN、树洞、学生邮箱）。', login: 'none', effect: 'read', cache: false, params: {},
     async run(ctx) {
       const [elearningStatus, jwfw] = await Promise.all([platformStatus(ctx.session, 'elearning'), platformStatus(ctx.session, 'jwfw')]);
       return {
@@ -160,7 +180,114 @@ export const OPS: Op[] = [
   }),
   op({
     name: 'auth.logout', summary: '删除本机保存的复旦账号登录状态（树洞、邮箱分别用 fdu hole logout、fdu mail forget）。', login: 'none', effect: 'auth', mcp: false, params: {},
-    async run(ctx) { return { removed: ctx.session.clear() }; },
+    async run(ctx) { return { removed: ctx.session.clear(), cacheCleared: ctx.cache?.clear() ?? 0 }; },
+  }),
+  op({
+    name: 'auth.doctor', summary: '检查运行环境：Node.js、浏览器、配置目录、能不能连上各个学校系统、各账号的登录状态，每项给出修复建议（结果里没有账号和 Cookie，可以直接发给别人帮忙看）。',
+    login: 'none', effect: 'read', cache: false, params: {}, examples: ['fdu doctor'],
+    async run(ctx) {
+      return runDoctor({
+        nodeVersion: process.version, platform: process.platform, configDir: ctx.store.dir,
+        configDirState: () => {
+          try {
+            mkdirSync(ctx.store.dir, { recursive: true, mode: 0o700 });
+            accessSync(ctx.store.dir, fsConstants.W_OK);
+            return { writable: true, mode: statSync(ctx.store.dir).mode };
+          } catch { return { writable: false }; }
+        },
+        browser: () => ctx.session.probeBrowser(),
+        reach: async (url) => { const r = await ctx.session.raw(url, { timeoutMs: 10_000 }); return { status: r.status, url: r.url }; },
+        login: async () => {
+          const hasState = ctx.session.hasState();
+          if (!hasState) return { hasState, elearning: 'need_login', jwfw: 'need_login', webvpn: false };
+          const [elearningStatus, jwfw, webvpn] = await Promise.all([platformStatus(ctx.session, 'elearning'), platformStatus(ctx.session, 'jwfw'), webvpnAlive(ctx.session)]);
+          return { hasState, elearning: elearningStatus, jwfw, webvpn };
+        },
+        treehole: !!ctx.store.readJson<HoleTokens>(HOLE),
+        mail: !!ctx.store.readJson<MailConfig>(MAIL)?.user,
+        proxy: proxyFromEnv()?.server,
+      });
+    },
+  }),
+  op({
+    name: 'cache.clear', summary: '删除本机缓存的查询结果（退出登录时也会自动删除）。', login: 'none', effect: 'local-write', mcp: false, cache: false, params: {},
+    async run(ctx) { return { removed: ctx.cache?.clear() ?? 0 }; },
+  }),
+
+  // ======================= 汇总 =======================
+  op({
+    name: 'overview.today', summary: '今天的概况：今天的课（按教学周和放假安排筛好）、3 天内要交还没交的作业、7 天内的考试、过了截止还没交的作业。某一类读不到时其他照常返回，读不到的写在 errors 里。',
+    login: 'uis', effect: 'read', params: { date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('日期 YYYY-MM-DD，默认今天') },
+    examples: ['fdu today', 'fdu today --date 2026-11-09'],
+    async run(ctx, a) {
+      const r = todayRange(ctx.now(), a.date);
+      return overview(overviewDeps(ctx), { ...r, now: ctx.now() });
+    },
+  }),
+  op({
+    name: 'overview.week', summary: '这一周（按校历从周日到周六）每天的课、本周要交的作业、本周的考试，以及第几教学周。',
+    login: 'uis', effect: 'read', params: { date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('这一周里的任意一天，默认今天') },
+    examples: ['fdu week', 'fdu week --date 2026-11-16'],
+    async run(ctx, a) {
+      const r = weekRange(ctx.now(), a.date);
+      return overview(overviewDeps(ctx), { ...r, now: ctx.now() });
+    },
+  }),
+  op({
+    name: 'calendar.export', summary: '把课表、考试和作业截止时间导出成日历文件（.ics），可以导入苹果日历、Outlook、Google 日历。重复导入同一学期会更新已有日程，不会重复添加。',
+    login: 'uis', effect: 'local-write', cache: false,
+    params: {
+      out: z.string().optional().describe('保存到哪里，默认当前目录的 fudan.ics'),
+      include: z.string().regex(/^(timetable|exams|assignments)(,(timetable|exams|assignments))*$/).optional().describe('导出哪些，逗号分隔：timetable,exams,assignments（默认全部）'),
+      overwrite: flag('文件已存在时覆盖（默认另存为新文件名）'),
+      alarms: flag('考试和作业截止前一天提醒（默认开）'),
+    },
+    examples: ['fdu calendar export', 'fdu calendar export --include timetable,exams --out ~/Desktop/fudan.ics'],
+    async run(ctx, a) {
+      const include = new Set((a.include ?? 'timetable,exams,assignments').split(','));
+      const alarms = a.alarms ?? true;
+      const deps = overviewDeps(ctx);
+      const events: IcsEvent[] = [];
+      const errors: Record<string, string> = {};
+      const counts = { classes: 0, exams: 0, deadlines: 0 };
+      let skipped: { date: string; course: string; reason: string }[] = [];
+      let semester: string | undefined;
+      let firstError: unknown;
+      const attempt = async (name: string, f: () => Promise<void>) => {
+        try { await f(); } catch (e) { firstError ??= e; errors[name] = (e as Error).message; }
+      };
+      if (include.has('timetable')) await attempt('timetable', async () => {
+        const table = await deps.timetable();
+        semester = table.semester?.name;
+        const all = allSessions(table);
+        if (!all.week0Sunday) throw new FduError('NOT_FOUND', '不知道这个学期从哪天开始，没法排出上课日期。');
+        skipped = all.skipped;
+        for (const s of all.sessions) {
+          events.push({ key: `class|${s.course}|${s.date}|${s.start}`, summary: s.course, startsAt: s.startsAt, endsAt: s.endsAt, location: s.location, description: [`第 ${s.week} 周 · 第 ${s.periods} 节`, s.teachers.join('、')].filter(Boolean).join('\n'), categories: ['课程'] });
+        }
+        counts.classes = all.sessions.length;
+      });
+      if (include.has('exams')) await attempt('exams', async () => {
+        for (const e of await deps.exams()) {
+          events.push({ key: `exam|${e.course}|${e.startsAt}`, summary: `考试：${e.course}`, startsAt: e.startsAt, endsAt: e.endsAt ?? new Date(Date.parse(e.startsAt) + 2 * 3_600_000).toISOString(), location: e.location, description: e.timeText, alarmMinutes: alarms ? 24 * 60 : undefined, categories: ['考试'] });
+          counts.exams++;
+        }
+      });
+      if (include.has('assignments')) await attempt('assignments', async () => {
+        for (const x of await deps.assignments()) {
+          if (x.done || !x.dueAt || Date.parse(x.dueAt) < ctx.now()) continue;
+          // 截止时间前 30 分钟的一小段，日历里看得见；提醒放在前一天
+          events.push({ key: `due|${x.course}|${x.name}`, summary: `截止：${x.name}${x.course ? `（${x.course}）` : ''}`, startsAt: new Date(Date.parse(x.dueAt) - 30 * 60_000).toISOString(), endsAt: x.dueAt, url: x.htmlUrl, alarmMinutes: alarms ? 24 * 60 : undefined, categories: ['作业'] });
+          counts.deadlines++;
+        }
+      });
+      if (!events.length && firstError) throw firstError;
+      const target = resolve(ctx.cwd, a.out ?? 'fudan.ics');
+      mkdirSync(dirname(target), { recursive: true });
+      const path = a.overwrite ? target : safeTarget(dirname(target), basename(target));
+      writeFileSync(path, buildIcs(events, { name: semester ? `复旦课表 ${semester}` : '复旦课表', now: ctx.now() }), { mode: 0o644 });
+      return { path, events: counts, skippedHolidays: skipped, ...(Object.keys(errors).length ? { errors } : {}) };
+    },
   }),
 
   // ======================= eLearning =======================
@@ -227,6 +354,22 @@ export const OPS: Op[] = [
   op({
     name: 'jw.semesters', summary: '教务系统里的学期列表（id、名称）和当前学期。', login: 'uis', effect: 'read', params: {},
     async run(ctx) { return readSemesters(ctx.session.reader('jwfw')); },
+  }),
+  op({
+    name: 'jw.week', summary: '某天是第几教学周、星期几、是否放假（按学校校历；校历没覆盖到的学期按教务系统的学期开始日期推算）。', login: 'none', effect: 'read', cache: false,
+    params: { date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('日期 YYYY-MM-DD，默认今天') },
+    async run(ctx, a) {
+      const day = a.date ?? shanghaiDay(ctx.now());
+      let info = weekInfo(day);
+      // 内置校历没有这个学期：登录了就用教务系统的学期开始日期推算
+      if (info.source === 'none' && ctx.session.hasState()) {
+        try {
+          const { semesters, currentId } = await readSemesters(ctx.session.reader('jwfw'));
+          info = weekInfo(day, semesters.find((x) => x.id === currentId));
+        } catch { /* 推算不了就按寒暑假处理 */ }
+      }
+      return info;
+    },
   }),
   op({
     name: 'jw.timetable', summary: '课表：每门课的上课时间（星期、节次、起止时间）、地点、教学周、教师。', login: 'uis', effect: 'read',
@@ -314,7 +457,7 @@ export const OPS: Op[] = [
 
   // ======================= 学校通知 =======================
   op({
-    name: 'notices.sources', summary: '内置的学校部门和院系官网通知来源（id、名称、网址）。', login: 'none', effect: 'read', params: {},
+    name: 'notices.sources', summary: '内置的学校部门和院系官网通知来源（id、名称、网址）。', login: 'none', effect: 'read', cache: false, params: {},
     async run() { return NOTICE_SOURCES; },
   }),
   op({
@@ -410,7 +553,7 @@ export const OPS: Op[] = [
     },
   }),
   op({
-    name: 'mail.read', summary: '读一封邮件的正文（按 uid，来自 mail list）。', login: 'mail', effect: 'read', sensitive: true,
+    name: 'mail.read', summary: '读一封邮件的正文（按 uid，来自 mail list）。', login: 'mail', effect: 'read', sensitive: true, cache: false,
     params: { uid: z.string().regex(/^\d+$/), days: int('在最近几天里找，默认 30', 1, 365) },
     async run(ctx, a) {
       const m = (await mailClient(ctx).fetchSince(new Date(ctx.now() - (a.days ?? 30) * DAY), 1000)).find((x) => x.uid === a.uid);

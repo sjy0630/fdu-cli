@@ -17,7 +17,7 @@ description: 查询复旦大学校园服务：eLearning 课程 / 作业 / DDL / 
 
 ## 登录
 
-- 先看 `fdu status`。`NEED_LOGIN` 时请**用户自己**在终端运行 `fdu login`：会打开浏览器，用户在学校的登录页里输入账号密码、完成短信 / 企业微信验证，窗口会自动关闭。不要替用户输入、索要或记录密码。
+- 出问题先看 `fdu doctor`（环境、网络、各账号登录状态，每项带修复建议），或者只看登录状态 `fdu status`。`NEED_LOGIN` 时请**用户自己**在终端运行 `fdu login`：会打开浏览器，用户在学校的登录页里输入账号密码、完成短信 / 企业微信验证，窗口会自动关闭。不要替用户输入、索要或记录密码。
   - 用户同意时你也可以运行 `fdu login` 帮他打开浏览器，但它会等待用户在浏览器里操作（最长 5 分钟）。
 - 树洞 / 旦克：`NEED_HOLE_LOGIN` 时请用户在终端运行 `fdu hole login --email 学号@m.fudan.edu.cn`（要在终端里输入密码，只能用户自己运行）。校外访问需要先 `fdu login --webvpn`。
 - 学生邮箱：`NEED_MAIL_SETUP` 时请用户运行 `fdu mail setup --user 邮箱地址`，输入网页邮箱里生成的客户端专用密码。
@@ -37,7 +37,11 @@ description: 查询复旦大学校园服务：eLearning 课程 / 作业 / DDL / 
 
 | 用户想要 | 命令 |
 |---|---|
+| 今天有什么（课、快到期的作业、考试） | `fdu today`（某天：`--date 2026-11-09`） |
+| 这周的安排 | `fdu week`（校历一周从周日开始） |
+| 现在第几教学周 | `fdu jw week` |
 | 这周有什么 DDL | `fdu todo --days 7`（= `fdu elearning todo`） |
+| 把课表放进日历 | `fdu calendar export --out ~/Desktop/fudan.ics`，再让用户导入日历软件 |
 | 某门课的作业 | `fdu elearning assignments --course 数据结构` |
 | 今天 / 这周的课 | `fdu jw timetable`，按 `weekday`（1 = 周一）和教学周 `weeks` 筛选 |
 | 考试安排 | `fdu jw exams` |
@@ -54,9 +58,14 @@ description: 查询复旦大学校园服务：eLearning 课程 / 作业 / DDL / 
 | 树洞里怎么说 | `fdu hole search --keyword 食堂` → `fdu hole read --id <洞号>` |
 | 最近的邮件 | `fdu mail list --days 3`，正文 `fdu mail read --uid <uid>` |
 
+## 缓存
+
+只读查询的结果会缓存在本机。网络不通或只想看上次的数据时加 `--cached`（返回里有 `cachedAt`，告诉用户是什么时候的数据）。联网失败时错误里如果带了 `cached: {at, data}`，可以先用这份数据回答，同时说明它是哪个时间的、以及怎么恢复（通常是 `fdu login`）。
+
 ## 出错时
 
 - `NEED_LOGIN` / `NEED_HOLE_LOGIN` / `NEED_MAIL_SETUP`：按上面的「登录」处理，然后重试一次。
+- `today` / `week` 某一类数据读不到时，结果里的 `errors` 写了是哪一类、为什么，其余照常返回。
 - `UPSTREAM`：学校系统出错或网络问题。部分院系网站、树洞只允许校园网访问，校外请用户连学校 VPN 或 `fdu login --webvpn`。
 - `FORMAT_CHANGED`：学校页面改版了，告诉用户，别反复重试。
 - `NO_BROWSER`：用户需要安装 Chrome / Edge，或设置 `FDU_BROWSER`。

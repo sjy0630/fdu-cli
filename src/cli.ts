@@ -1,6 +1,7 @@
 import { createInterface } from 'node:readline';
 import { Session } from './core/session';
 import { Store } from './core/store';
+import { Cache } from './core/cache';
 import { serveMcp } from './mcp';
 import { findOp, OPS, type Ctx } from './ops';
 import { camel, describeOp, exitCode, runOp, type Failure } from './run';
@@ -9,8 +10,11 @@ declare const __FDU_VERSION__: string;
 const VERSION = typeof __FDU_VERSION__ === 'string' ? __FDU_VERSION__ : '0.0.0-dev';
 
 /** 常用命令的简写 */
-const ALIASES: Record<string, string> = { login: 'auth.login', logout: 'auth.logout', status: 'auth.status', todo: 'elearning.todo' };
-const GLOBAL = new Set(['compact', 'profile', 'browser', 'headed']);
+const ALIASES: Record<string, string> = {
+  login: 'auth.login', logout: 'auth.logout', status: 'auth.status', doctor: 'auth.doctor',
+  todo: 'elearning.todo', today: 'overview.today', week: 'overview.week',
+};
+const GLOBAL = new Set(['compact', 'profile', 'browser', 'headed', 'cached']);
 
 export interface ParsedArgs { positionals: string[]; flags: Record<string, string | true> }
 
@@ -59,13 +63,15 @@ const HELP = `fdu ${VERSION} — 复旦校园服务命令行（输出 JSON）
 用法：
   fdu login [--webvpn]            登录复旦统一身份认证（打开浏览器，你自己输入账号密码）
   fdu status                      各系统的登录状态
+  fdu doctor                      检查环境、网络和登录，给出修复建议
+  fdu today / fdu week            今天 / 这周的课、要交的作业、考试
   fdu <服务> <操作> [--参数 值]    例如 fdu jw timetable、fdu elearning todo --days 7
   fdu services                    列出全部操作
   fdu describe <服务.操作>         查看参数和示例
   fdu mcp                         以 MCP 服务运行（给 Claude Code、Codex 等用）
 
-通用参数：--compact 紧凑输出；--profile 名称 使用另一套登录状态；--browser 路径 指定浏览器
-服务：auth、elearning、jw（教务）、card、dorm、library、notices、hole（树洞）、danke（旦克）、mail
+通用参数：--compact 紧凑输出；--cached 不联网，返回上次查询的结果；--profile 名称 使用另一套登录状态；--browser 路径 指定浏览器
+服务：auth、overview（汇总）、calendar（导出日历）、elearning、jw（教务）、card、dorm、library、notices、hole（树洞）、danke（旦克）、mail、cache
 `;
 
 async function main(argv: string[]): Promise<number> {
@@ -106,9 +112,10 @@ async function main(argv: string[]): Promise<number> {
     store, session, cwd: process.cwd(), now: () => Date.now(),
     log: (m) => process.stderr.write(`${m}\n`),
     prompt: process.stdin.isTTY ? prompt : undefined,
+    cache: new Cache(store),
   };
   try {
-    const result = await runOp(op, ctx, input);
+    const result = await runOp(op, ctx, input, { cachedOnly: flags.cached === true });
     print(result);
     return exitCode(result);
   } finally {

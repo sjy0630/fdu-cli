@@ -85,6 +85,15 @@ export class Session {
       '安装 Chrome / Edge，或者设置环境变量 FDU_BROWSER 为 Chromium 内核浏览器的可执行文件路径。');
   }
 
+  /** 能不能启动无界面浏览器（fdu doctor 用），返回浏览器名称和版本 */
+  async probeBrowser(): Promise<string> {
+    const browser = await this.launch(true);
+    try {
+      const path = this.opts.browserPath ?? process.env.FDU_BROWSER;
+      return `${browser.browserType().name()} ${browser.version()}${path ? `（${path}）` : ''}`;
+    } finally { await browser.close().catch(() => undefined); }
+  }
+
   /**
    * 在浏览器里打开页面，直到 done(page) 返回 true；返回最后一次读到的 HTML（含同源 iframe）。
    * 页面停在统一身份认证超过 stuckOnUisMs 时：无界面模式抛出 NeedLoginError，有界面模式继续等你登录。

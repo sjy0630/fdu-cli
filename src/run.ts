@@ -2,15 +2,26 @@ import { z } from 'zod';
 import { FduError, toFduError } from './core/errors';
 import type { Op, Ctx } from './ops';
 
-export interface Outcome { ok: true; op: string; data: unknown }
-export interface Failure { ok: false; op?: string; error: { code: string; message: string; hint?: string } }
+export interface Outcome { ok: true; op: string; data: unknown; /** 来自本地缓存时：上次查询的时间 */ cachedAt?: string }
+export interface Failure {
+  ok: false; op?: string; error: { code: string; message: string; hint?: string };
+  /** 联网失败但本地有上次的结果时附上（at 是上次查询的时间） */
+  cached?: { at: string; data: unknown };
+}
+
+/** 这个操作的结果要不要缓存：只读的默认缓存，标了 cache: false 的不缓存 */
+export const cacheable = (op: Op) => op.effect === 'read' && op.cache !== false;
 
 /** 命令行参数名（kebab-case）→ 参数表里的名字（camelCase） */
 export const camel = (s: string) => s.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
 export const kebab = (s: string) => s.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
 
-/** 校验参数并运行一个操作；任何错误都变成 { ok:false, error } */
-export async function runOp(op: Op, ctx: Ctx, input: Record<string, unknown>): Promise<Outcome | Failure> {
+/**
+ * 校验参数并运行一个操作；任何错误都变成 { ok:false, error }。
+ * cachedOnly：不联网，只返回本地缓存（没有缓存时报 NOT_FOUND）。
+ */
+export async function runOp(op: Op, ctx: Ctx, input: Record<string, unknown>, opts: { cachedOnly?: boolean } = {}): Promise<Outcome | Failure> {
+  let args: Record<string, unknown> | undefined;
   try {
     const parsed = z.object(op.params).strict().safeParse(input);
     if (!parsed.success) {
@@ -19,10 +30,25 @@ export async function runOp(op: Op, ctx: Ctx, input: Record<string, unknown>): P
         : `--${kebab(String(i.path[0] ?? ''))}：${i.message}`);
       throw new FduError('BAD_ARGS', issues.join('；'), `用 \`fdu describe ${op.name}\` 查看参数。`);
     }
-    return { ok: true, op: op.name, data: await op.run(ctx, parsed.data) };
+    args = parsed.data;
+    const useCache = !!ctx.cache && cacheable(op);
+    if (opts.cachedOnly) {
+      const hit = useCache ? ctx.cache!.get(op.name, args) : null;
+      if (!hit) throw new FduError('NOT_FOUND', useCache ? '本地还没有这个查询的缓存。' : '这个命令的结果不缓存。', '去掉 --cached 联网查询一次。');
+      return { ok: true, op: op.name, data: hit.data, cachedAt: hit.at };
+    }
+    const data = await op.run(ctx, args);
+    if (useCache) { try { ctx.cache!.set(op.name, args, data, ctx.now()); } catch { /* 缓存写不进去不影响结果 */ } }
+    return { ok: true, op: op.name, data };
   } catch (e) {
     const err = toFduError(e);
-    return { ok: false, op: op.name, error: { code: err.code, message: err.message, ...(err.hint ? { hint: err.hint } : {}) } };
+    const failure: Failure = { ok: false, op: op.name, error: { code: err.code, message: err.message, ...(err.hint ? { hint: err.hint } : {}) } };
+    // 没登录、学校系统出错时，附上上次的结果（参数错误等不附）
+    if (!opts.cachedOnly && args && ctx.cache && cacheable(op) && (err.code.startsWith('NEED_') || err.code === 'UPSTREAM')) {
+      const hit = ctx.cache.get(op.name, args);
+      if (hit) failure.cached = { at: hit.at, data: hit.data };
+    }
+    return failure;
   }
 }
 
@@ -43,7 +69,7 @@ export function describeOp(op: Op) {
   }));
   return {
     name: op.name, command: `fdu ${op.name.replace('.', ' ')}`, summary: op.summary,
-    login: op.login, effect: op.effect, sensitive: !!op.sensitive, mcpTool: op.mcp === false ? null : op.name.replace('.', '_'),
+    login: op.login, effect: op.effect, sensitive: !!op.sensitive, cached: cacheable(op), mcpTool: op.mcp === false ? null : op.name.replace('.', '_'),
     params, examples: op.examples ?? [],
   };
 }

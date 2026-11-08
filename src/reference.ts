@@ -3,7 +3,7 @@ import { describeOp } from './run';
 
 const LOGIN: Record<string, string> = { uis: '复旦账号', hole: '树洞账号', mail: '学生邮箱', none: '不用' };
 const GROUPS: Record<string, string> = {
-  auth: '账号', elearning: 'eLearning', jw: '教务系统', card: '校园卡', dorm: '宿舍', library: '图书馆',
+  auth: '账号与环境', cache: '缓存', overview: '汇总', calendar: '日历', elearning: 'eLearning', jw: '教务系统', card: '校园卡', dorm: '宿舍', library: '图书馆',
   notices: '学校通知', hole: '树洞', danke: '旦克（课程评价）', mail: '学生邮箱',
 };
 
@@ -17,6 +17,8 @@ export function referenceMarkdown(): string {
     '所有命令输出 JSON：成功是 `{"ok":true,"op":...,"data":...}`，失败是 `{"ok":false,"error":{"code","message","hint"}}`。',
     '退出码：0 成功，2 参数错误，3 需要登录或配置（`NEED_LOGIN` / `NEED_HOLE_LOGIN` / `NEED_MAIL_SETUP`），1 其他错误。',
     'MCP 工具名是把命令里的点换成下划线，如 `jw.grades` → `jw_grades`。',
+    '简写：`fdu login` / `logout` / `status` / `doctor` / `today` / `week` / `todo`。',
+    '只读查询的结果会缓存在本机：加 `--cached` 不联网直接返回上次的结果（带 `cachedAt`）；联网失败时，错误里附上上次的结果 `cached: {at, data}`。',
     '',
   ];
   let group = '';
