@@ -1,4 +1,4 @@
-import { chromium, request, type APIRequestContext, type Browser, type Page } from 'playwright-core';
+import { chromium, request, type APIRequestContext, type Browser, type BrowserContext, type Page } from 'playwright-core';
 import { FduError } from './errors';
 import { isUisLoginUrl, NeedLoginError, type FudanPlatform } from './fudan-auth';
 import type { CampusReader } from './types';
@@ -45,6 +45,8 @@ export class Session {
   private fromBrowser = false;
   /** 浏览器最后停在的地址（排查登录问题用，只取路径） */
   lastUrl = '';
+  /** 常驻的无界面浏览器页面：只认真浏览器请求的系统（WebVPN）在这里发请求 */
+  private bpage?: { context: BrowserContext; page: Page };
 
   constructor(private readonly store: Store, private readonly opts: { browserPath?: string; headed?: boolean } = {}) {}
 
@@ -109,6 +111,8 @@ export class Session {
    * 页面停在统一身份认证超过 stuckOnUisMs 时：无界面模式抛出 NeedLoginError，有界面模式继续等你登录。
    */
   async withPage(url: string, done: (page: Page, html: string) => Promise<boolean> | boolean, opts: { headless: boolean; timeoutMs: number; stuckOnUisMs?: number; platform?: FudanPlatform }): Promise<string> {
+    // 常驻页面里拿到的 Cookie 先合并回来，再从同一份状态开新窗口
+    await this.dropBrowserPage();
     const browser = opts.headless ? (this.browser ??= await this.launch(true)) : await this.launch(false);
     const context = await browser.newContext({ storageState: await this.state(), proxy: proxyFromEnv(), userAgent: UA, viewport: opts.headless ? { width: 1280, height: 900 } : null });
     try {
@@ -212,6 +216,58 @@ export class Session {
     };
   }
 
+  /**
+   * 常驻的无界面浏览器页面，停在 origin 下（同源请求才带得上 Cookie）。
+   * WebVPN 只认真正的浏览器发出的请求：后台请求带着同样的 Cookie 也会被带回登录页。
+   */
+  async browserPage(origin: string): Promise<Page> {
+    if (!this.bpage) {
+      const browser = this.browser ??= await this.launch(true);
+      const context = await browser.newContext({ storageState: await this.state(), proxy: proxyFromEnv(), userAgent: UA, viewport: { width: 1280, height: 900 } });
+      this.bpage = { context, page: await context.newPage() };
+    }
+    const { page } = this.bpage;
+    let current = '';
+    try { current = new URL(page.url()).origin; } catch { /* about:blank */ }
+    if (current !== new URL(origin).origin) await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => undefined);
+    return page;
+  }
+
+  /** 在常驻浏览器页面里发请求（同源），返回和 raw 一样的结果 */
+  async browserFetch(url: string, init: FetchInit = {}): Promise<RawResponse> {
+    const page = await this.browserPage(new URL(url).origin);
+    const run = () => page.evaluate(async ([u, method, headers, body, ms]) => {
+      const res = await fetch(u as string, { method: method as string, headers: headers as Record<string, string>, body: (body as string) || undefined, credentials: 'include', redirect: 'follow', signal: AbortSignal.timeout(ms as number) });
+      return { status: res.status, url: res.url, contentType: res.headers.get('content-type') ?? '', text: await res.text() };
+    }, [url, init.method ?? 'GET', init.headers ?? {}, init.body ?? '', init.timeoutMs ?? 20_000] as const);
+    let r: RawResponse | undefined;
+    // 页面自己还在跳转（比如 WebVPN 首页的脚本跳转）时请求会被打断：等页面稳定后重试
+    for (let attempt = 0; !r; attempt++) {
+      try { r = await run(); } catch (e) {
+        if (attempt >= 3 || !/Execution context was destroyed|navigat/i.test(String((e as Error).message))) throw e;
+        await page.waitForLoadState('load', { timeout: 10_000 }).catch(() => undefined);
+        await sleep(300);
+      }
+    }
+    this.dirty = true;
+    return r;
+  }
+
+  /** 常驻页面里拿到的 Cookie 合并回会话，然后关掉它 */
+  private async dropBrowserPage(): Promise<void> {
+    const b = this.bpage;
+    if (!b) return;
+    this.bpage = undefined;
+    try {
+      const state = await b.context.storageState();
+      const old = this.ctx;
+      this.ctx = await request.newContext({ storageState: state, userAgent: UA, timeout: 20_000, proxy: proxyFromEnv() });
+      this.dirty = true;
+      if (old) setTimeout(() => { void old.dispose().catch(() => undefined); }, 30_000).unref();
+    } catch { /* 浏览器已经关了 */ }
+    await b.context.close().catch(() => undefined);
+  }
+
   /** 只在登录过（已有 state.json，或这次在浏览器里登录了）时写回；只访问公开接口不产生登录状态 */
   async save(): Promise<void> {
     if (!this.ctx || !this.dirty || (!this.hasState() && !this.fromBrowser)) return;
@@ -231,6 +287,7 @@ export class Session {
 
   /** 保存 Cookie 并关掉无界面浏览器（MCP 服务每次调用后用，下次需要时再开） */
   async release(): Promise<void> {
+    await this.dropBrowserPage();
     await this.save().catch(() => undefined);
     const browser = this.browser;
     this.browser = undefined;
@@ -238,6 +295,7 @@ export class Session {
   }
 
   async close(): Promise<void> {
+    await this.dropBrowserPage();
     await this.save().catch(() => undefined);
     await this.ctx?.dispose().catch(() => undefined);
     await this.browser?.close().catch(() => undefined);

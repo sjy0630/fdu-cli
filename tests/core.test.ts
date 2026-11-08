@@ -133,6 +133,7 @@ describe('会话', () => {
   let base = '';
   beforeAll(async () => {
     server = createServer((req, res) => {
+      if (req.url === '/') { res.writeHead(200, { 'Content-Type': 'text/html' }); res.end('<html><body>home</body></html>'); return; }
       if (req.url === '/set') { res.writeHead(302, { 'Set-Cookie': 'a=1; Path=/', Location: '/echo' }); res.end(); return; }
       if (req.url === '/echo') { res.writeHead(200, { 'Content-Type': 'text/plain' }); res.end(`cookie=${req.headers.cookie ?? ''}`); return; }
       if (req.url === '/js') {
@@ -175,6 +176,18 @@ describe('会话', () => {
     const state = JSON.parse(readFileSync(store.path('state.json'), 'utf8')) as { cookies: { name: string }[] };
     expect(state.cookies.map((c) => c.name)).toContain('a');
   });
+
+  it.skipIf(!BROWSER)('在常驻浏览器页面里发请求（只认真浏览器的系统用）；拿到的 Cookie 合并回会话', async () => {
+    process.env.FDU_HOME = tmp();
+    const store = new Store();
+    store.writeJson('state.json', { cookies: [], origins: [] });
+    const s = new Session(store, { browserPath: BROWSER });
+    const r = await s.browserFetch(`${base}/set`);
+    expect(r).toMatchObject({ status: 200, url: `${base}/echo`, text: 'cookie=a=1' });
+    await s.close();
+    const state = JSON.parse(readFileSync(store.path('state.json'), 'utf8')) as { cookies: { name: string }[] };
+    expect(state.cookies.map((c) => c.name)).toContain('a');
+  }, 30_000);
 
   it.skipIf(!BROWSER)('页面靠脚本加载时在无界面浏览器里渲染；浏览器里拿到的 Cookie 后续请求也能用', async () => {
     process.env.FDU_HOME = tmp();

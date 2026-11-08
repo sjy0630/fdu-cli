@@ -96,6 +96,8 @@ var Session = class {
   fromBrowser = false;
   /** 浏览器最后停在的地址（排查登录问题用，只取路径） */
   lastUrl = "";
+  /** 常驻的无界面浏览器页面：只认真浏览器请求的系统（WebVPN）在这里发请求 */
+  bpage;
   hasState() {
     return !!this.store.readJson(STATE);
   }
@@ -166,6 +168,7 @@ var Session = class {
    * 页面停在统一身份认证超过 stuckOnUisMs 时：无界面模式抛出 NeedLoginError，有界面模式继续等你登录。
    */
   async withPage(url, done, opts) {
+    await this.dropBrowserPage();
     const browser = opts.headless ? this.browser ??= await this.launch(true) : await this.launch(false);
     const context = await browser.newContext({ storageState: await this.state(), proxy: proxyFromEnv(), userAgent: UA, viewport: opts.headless ? { width: 1280, height: 900 } : null });
     try {
@@ -278,6 +281,62 @@ var Session = class {
       render: (url, ready) => this.render(platform, url, ready)
     };
   }
+  /**
+   * 常驻的无界面浏览器页面，停在 origin 下（同源请求才带得上 Cookie）。
+   * WebVPN 只认真正的浏览器发出的请求：后台请求带着同样的 Cookie 也会被带回登录页。
+   */
+  async browserPage(origin) {
+    if (!this.bpage) {
+      const browser = this.browser ??= await this.launch(true);
+      const context = await browser.newContext({ storageState: await this.state(), proxy: proxyFromEnv(), userAgent: UA, viewport: { width: 1280, height: 900 } });
+      this.bpage = { context, page: await context.newPage() };
+    }
+    const { page } = this.bpage;
+    let current = "";
+    try {
+      current = new URL(page.url()).origin;
+    } catch {
+    }
+    if (current !== new URL(origin).origin) await page.goto(origin, { waitUntil: "domcontentloaded", timeout: 3e4 }).catch(() => void 0);
+    return page;
+  }
+  /** 在常驻浏览器页面里发请求（同源），返回和 raw 一样的结果 */
+  async browserFetch(url, init = {}) {
+    const page = await this.browserPage(new URL(url).origin);
+    const run = () => page.evaluate(async ([u, method, headers, body3, ms]) => {
+      const res = await fetch(u, { method, headers, body: body3 || void 0, credentials: "include", redirect: "follow", signal: AbortSignal.timeout(ms) });
+      return { status: res.status, url: res.url, contentType: res.headers.get("content-type") ?? "", text: await res.text() };
+    }, [url, init.method ?? "GET", init.headers ?? {}, init.body ?? "", init.timeoutMs ?? 2e4]);
+    let r;
+    for (let attempt = 0; !r; attempt++) {
+      try {
+        r = await run();
+      } catch (e) {
+        if (attempt >= 3 || !/Execution context was destroyed|navigat/i.test(String(e.message))) throw e;
+        await page.waitForLoadState("load", { timeout: 1e4 }).catch(() => void 0);
+        await sleep(300);
+      }
+    }
+    this.dirty = true;
+    return r;
+  }
+  /** 常驻页面里拿到的 Cookie 合并回会话，然后关掉它 */
+  async dropBrowserPage() {
+    const b = this.bpage;
+    if (!b) return;
+    this.bpage = void 0;
+    try {
+      const state = await b.context.storageState();
+      const old = this.ctx;
+      this.ctx = await request.newContext({ storageState: state, userAgent: UA, timeout: 2e4, proxy: proxyFromEnv() });
+      this.dirty = true;
+      if (old) setTimeout(() => {
+        void old.dispose().catch(() => void 0);
+      }, 3e4).unref();
+    } catch {
+    }
+    await b.context.close().catch(() => void 0);
+  }
   /** 只在登录过（已有 state.json，或这次在浏览器里登录了）时写回；只访问公开接口不产生登录状态 */
   async save() {
     if (!this.ctx || !this.dirty || !this.hasState() && !this.fromBrowser) return;
@@ -295,12 +354,14 @@ var Session = class {
   }
   /** 保存 Cookie 并关掉无界面浏览器（MCP 服务每次调用后用，下次需要时再开） */
   async release() {
+    await this.dropBrowserPage();
     await this.save().catch(() => void 0);
     const browser = this.browser;
     this.browser = void 0;
     await browser?.close().catch(() => void 0);
   }
   async close() {
+    await this.dropBrowserPage();
     await this.save().catch(() => void 0);
     await this.ctx?.dispose().catch(() => void 0);
     await this.browser?.close().catch(() => void 0);
@@ -469,12 +530,13 @@ var where = (url) => {
 };
 async function webvpnCheck(session) {
   try {
-    const r = await session.raw(WEBVPN_HOME, { timeoutMs: 15e3 });
-    const u = new URL(r.url);
-    const alive = r.status < 400 && u.hostname === "webvpn.fudan.edu.cn" && !u.pathname.startsWith("/login");
-    return { alive, detail: `HTTP ${r.status}\uFF0C${where(r.url)}` };
+    const page = await session.browserPage(WEBVPN_HOME);
+    await page.goto(WEBVPN_HOME, { waitUntil: "domcontentloaded", timeout: 2e4 });
+    const u = new URL(page.url());
+    const alive = u.hostname === "webvpn.fudan.edu.cn" && !u.pathname.startsWith("/login");
+    return { alive, detail: where(page.url()) };
   } catch (e) {
-    return { alive: false, detail: `\u8FDE\u4E0D\u4E0A\uFF1A${String(e.message ?? e).split("\n")[0].slice(0, 80)}` };
+    return { alive: false, detail: `\u6253\u4E0D\u5F00\uFF1A${String(e.message ?? e).split("\n")[0].slice(0, 80)}` };
   }
 }
 async function webvpnAlive(session) {
@@ -482,15 +544,23 @@ async function webvpnAlive(session) {
 }
 async function ensureWebvpn(session, opts = {}) {
   if (await webvpnAlive(session)) return;
-  const headless = opts.headless ?? true;
-  await session.withPage(WEBVPN_CAS, async (page) => {
+  const page = await session.browserPage(WEBVPN_HOME);
+  await page.goto(WEBVPN_CAS, { waitUntil: "domcontentloaded", timeout: 3e4 }).catch(() => void 0);
+  for (let i = 0; i < 40; i++) {
     const u = new URL(page.url());
-    return u.hostname === "webvpn.fudan.edu.cn" && !u.pathname.startsWith("/login");
-  }, { headless, timeoutMs: headless ? 3e4 : 3e5, stuckOnUisMs: 6e3 });
-  const check = await webvpnCheck(session);
-  if (!check.alive) {
-    throw new FduError("NEED_LOGIN", `\u6CA1\u80FD\u5EFA\u7ACB WebVPN \u4F1A\u8BDD\uFF08\u6D4F\u89C8\u5668\u505C\u5728 ${where(session.lastUrl) || "\u672A\u77E5"}\uFF1B\u68C0\u67E5\u7ED3\u679C\uFF1A${check.detail}\uFF09\u3002`, "\u8FD0\u884C `fdu login --webvpn`\uFF0C\u5728\u6D4F\u89C8\u5668\u91CC\u5B8C\u6210\u767B\u5F55\uFF1B\u8FD8\u662F\u4E0D\u884C\u8BF7\u628A\u8FD9\u6761\u4FE1\u606F\u53D1\u7ED9\u5F00\u53D1\u8005\u3002");
+    if (u.hostname === "webvpn.fudan.edu.cn" && !u.pathname.startsWith("/login")) break;
+    await new Promise((r) => setTimeout(r, 500));
   }
+  if (await webvpnAlive(session)) return;
+  if (opts.headless === false) {
+    await session.withPage(WEBVPN_CAS, async (p) => {
+      const u = new URL(p.url());
+      return u.hostname === "webvpn.fudan.edu.cn" && !u.pathname.startsWith("/login");
+    }, { headless: false, timeoutMs: 3e5, stuckOnUisMs: 6e3 });
+    if (await webvpnAlive(session)) return;
+  }
+  const check = await webvpnCheck(session);
+  throw new FduError("NEED_LOGIN", `\u6CA1\u80FD\u5EFA\u7ACB WebVPN \u4F1A\u8BDD\uFF08\u68C0\u67E5\u65F6\u505C\u5728 ${check.detail}\uFF09\u3002`, "\u8FD0\u884C `fdu login --webvpn`\uFF0C\u5728\u6D4F\u89C8\u5668\u91CC\u5B8C\u6210\u767B\u5F55\uFF1B\u8FD8\u662F\u4E0D\u884C\u8BF7\u628A\u8FD9\u6761\u4FE1\u606F\u53D1\u7ED9\u5F00\u53D1\u8005\u3002");
 }
 async function login(session, opts = {}) {
   const existing = await elearningUser(session);
@@ -2879,6 +2949,9 @@ function dedupe(calls) {
   }
   return [...map.values()];
 }
+function sanitizeHtml(html) {
+  return redact(html.replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, "<IP>").replace(/Mozilla\/5\.0 \([^)]*\)[^<"\n]*/g, "<\u6D4F\u89C8\u5668\u6807\u8BC6>").replace(/(<input[^>]*type=["']?hidden["']?[^>]*value=)(["'])[^"']*\2/gi, "$1$2***$2").replace(/(<input[^>]*name=["']?(?:key|token|ticket|lt|execution)["']?[^>]*value=)(["'])[^"']*\2/gi, "$1$2***$2")).replace(/\d{11,}/g, "<\u6570\u5B57>").slice(0, 3e6);
+}
 
 // src/ops.ts
 function op(o) {
@@ -2933,9 +3006,12 @@ function safeTarget(dir, name) {
 }
 var HOLE = "hole.json";
 var MAIL = "mail.json";
+function viaWebvpnAware(ctx, url, init) {
+  return url.startsWith("https://webvpn.fudan.edu.cn/") ? ctx.session.browserFetch(url, init) : ctx.session.raw(url, init);
+}
 function treehole(ctx) {
   return new TreeholeClient({
-    fetch: (url, init) => ctx.session.raw(url, init),
+    fetch: (url, init) => viaWebvpnAware(ctx, url, init),
     ensureWebvpn: () => ensureWebvpn(ctx.session),
     tokens: {
       get: () => ctx.store.readJson(HOLE),
@@ -2955,7 +3031,7 @@ function mailClient(ctx) {
 function icourse(ctx) {
   if (!ctx.session.hasState()) throw new NeedLoginError("icourse");
   return new IcourseClient({
-    fetch: (url, init) => ctx.session.raw(url, { timeoutMs: init?.timeoutMs }),
+    fetch: (url, init) => viaWebvpnAware(ctx, url, { timeoutMs: init?.timeoutMs }),
     ensureWebvpn: () => ensureWebvpn(ctx.session),
     openInBrowser: async (url, done) => {
       await ctx.session.withPage(url, (page) => done(page.url()), { headless: true, timeoutMs: 3e4, platform: "icourse" });
@@ -3176,13 +3252,22 @@ var OPS = [
       url: z.string().url().describe("\u4ECE\u54EA\u4E2A\u9875\u9762\u5F00\u59CB\uFF0C\u5982 https://fdjwgl.fudan.edu.cn/student/home"),
       out: z.string().optional().describe("\u7ED3\u679C\u4FDD\u5B58\u5230\u54EA\u91CC\uFF0C\u9ED8\u8BA4\u5F53\u524D\u76EE\u5F55\u7684 fdu-capture-\u65F6\u95F4.json"),
       minutes: int2("\u6700\u591A\u5F55\u591A\u4E45\uFF08\u5206\u949F\uFF09\uFF0C\u9ED8\u8BA4 10", 1, 60),
-      keepQuery: flag("\u4FDD\u7559\u67E5\u8BE2\u53C2\u6570\u7684\u503C\uFF08\u5982\u7FFB\u9875\u53C2\u6570\u7684\u683C\u5F0F\uFF1B\u4EE4\u724C\u548C\u957F\u6570\u5B57\u4F1A\u906E\u6389\uFF0C\u53D1\u51FA\u524D\u8BF7\u81EA\u5DF1\u770B\u4E00\u904D\uFF09")
+      keepQuery: flag("\u4FDD\u7559\u67E5\u8BE2\u53C2\u6570\u7684\u503C\uFF08\u5982\u7FFB\u9875\u53C2\u6570\u7684\u683C\u5F0F\uFF1B\u4EE4\u724C\u548C\u957F\u6570\u5B57\u4F1A\u906E\u6389\uFF0C\u53D1\u51FA\u524D\u8BF7\u81EA\u5DF1\u770B\u4E00\u904D\uFF09"),
+      html: z.string().min(1).optional().describe("\u53E6\u5916\u4FDD\u5B58\u5730\u5740\u91CC\u5305\u542B\u8FD9\u6BB5\u6587\u5B57\u7684\u7F51\u9875\u7684\u539F\u59CB HTML\uFF08\u5982 day.asp\uFF09\uFF0CIP\u3001\u4EE4\u724C\u3001\u957F\u6570\u5B57\u4F1A\u906E\u6389")
     },
     examples: ["fdu dev capture --url https://fdjwgl.fudan.edu.cn/student/home"],
     async run(ctx, a) {
       const calls = [];
+      const pages = [];
       ctx.log("\u5DF2\u6253\u5F00\u6D4F\u89C8\u5668\uFF1A\u8BF7\u70B9\u5230\u8981\u505A\u7684\u529F\u80FD\u9875\u9762\uFF0C\u67E5\u8BE2\u4E00\u4E24\u6B21\uFF0C\u7136\u540E\u5173\u6389\u6D4F\u89C8\u5668\u7A97\u53E3\u3002");
       await ctx.session.record(a.url, async (r) => {
+        if (a.html && /html/.test(r.contentType) && r.status === 200) {
+          try {
+            const u = new URL(r.url);
+            if (`${u.pathname}${u.search}`.includes(a.html) && pages.length < 10) pages.push({ path: u.pathname.split("/").pop() || "page", html: sanitizeHtml(await r.body()) });
+          } catch {
+          }
+        }
         const c = await describeCall(r, { keepQuery: a.keepQuery });
         if (c) calls.push(c);
       }, (a.minutes ?? 10) * 6e4);
@@ -3192,7 +3277,13 @@ var OPS = [
       mkdirSync2(dirname2(target), { recursive: true });
       const path = safeTarget(dirname2(target), basename(target));
       writeFileSync2(path, JSON.stringify({ startUrl: a.url.split("?")[0], capturedAt: new Date(ctx.now()).toISOString(), calls: result }, null, 2));
-      return { path, calls: result.length, endpoints: result.map((c) => `${c.method} ${c.endpoint}`).slice(0, 50) };
+      const htmlFiles = pages.map((p, i) => {
+        const file = safeTarget(dirname2(path), `${basename(path).replace(/\.json$/i, "")}.${i + 1}.${p.path.replace(/[^\w.-]/g, "_")}.html`);
+        writeFileSync2(file, p.html);
+        return file;
+      });
+      if (a.html && !htmlFiles.length) ctx.log(`\u6CA1\u6709\u9047\u5230\u5730\u5740\u91CC\u5305\u542B\u300C${a.html}\u300D\u7684\u7F51\u9875\uFF0C\u6CA1\u6709\u4FDD\u5B58 HTML\u3002`);
+      return { path, calls: result.length, ...htmlFiles.length ? { htmlFiles } : {}, endpoints: result.map((c) => `${c.method} ${c.endpoint}`).slice(0, 50) };
     }
   }),
   op({

@@ -28,7 +28,7 @@ import { NeedLoginError } from './core/fudan-auth';
 import { cardRange, readCardRecords, summarize } from './services/ecard';
 import { BOOKING_CAS, bookingReady, listVenues, matchVenues, SPORTS_PAGE, venueCalendar, type GetJson } from './services/venues';
 import { addDays } from './services/calendar';
-import { dedupe, describeCall, type CapturedCall } from './services/capture';
+import { dedupe, describeCall, sanitizeHtml, type CapturedCall } from './services/capture';
 import { proxyFromEnv } from './core/session';
 
 /** 运行一个操作时能用到的东西 */
@@ -134,9 +134,14 @@ const HOLE = 'hole.json';
 const MAIL = 'mail.json';
 interface MailConfig { host: string; port: number; user: string; password: string }
 
+/** 经过 WebVPN 的请求在浏览器里发（WebVPN 只认真正的浏览器），其余照常 */
+function viaWebvpnAware(ctx: Ctx, url: string, init?: { method?: string; headers?: Record<string, string>; body?: string; timeoutMs?: number }) {
+  return url.startsWith('https://webvpn.fudan.edu.cn/') ? ctx.session.browserFetch(url, init) : ctx.session.raw(url, init);
+}
+
 function treehole(ctx: Ctx): TreeholeClient {
   return new TreeholeClient({
-    fetch: (url, init) => ctx.session.raw(url, init),
+    fetch: (url, init) => viaWebvpnAware(ctx, url, init),
     ensureWebvpn: () => ensureWebvpn(ctx.session),
     tokens: {
       get: () => ctx.store.readJson<HoleTokens>(HOLE),
@@ -156,7 +161,7 @@ function mailClient(ctx: Ctx): ImapMailClient {
 function icourse(ctx: Ctx): IcourseClient {
   if (!ctx.session.hasState()) throw new NeedLoginError('icourse');
   return new IcourseClient({
-    fetch: (url, init) => ctx.session.raw(url, { timeoutMs: init?.timeoutMs }),
+    fetch: (url, init) => viaWebvpnAware(ctx, url, { timeoutMs: init?.timeoutMs }),
     ensureWebvpn: () => ensureWebvpn(ctx.session),
     openInBrowser: async (url, done) => { await ctx.session.withPage(url, (page) => done(page.url()), { headless: true, timeoutMs: 30_000, platform: 'icourse' }); },
   });
@@ -353,19 +358,36 @@ export const OPS: Op[] = [
       out: z.string().optional().describe('结果保存到哪里，默认当前目录的 fdu-capture-时间.json'),
       minutes: int('最多录多久（分钟），默认 10', 1, 60),
       keepQuery: flag('保留查询参数的值（如翻页参数的格式；令牌和长数字会遮掉，发出前请自己看一遍）'),
+      html: z.string().min(1).optional().describe('另外保存地址里包含这段文字的网页的原始 HTML（如 day.asp），IP、令牌、长数字会遮掉'),
     },
     examples: ['fdu dev capture --url https://fdjwgl.fudan.edu.cn/student/home'],
     async run(ctx, a) {
       const calls: CapturedCall[] = [];
+      const pages: { path: string; html: string }[] = [];
       ctx.log('已打开浏览器：请点到要做的功能页面，查询一两次，然后关掉浏览器窗口。');
-      await ctx.session.record(a.url, async (r) => { const c = await describeCall(r, { keepQuery: a.keepQuery }); if (c) calls.push(c); }, (a.minutes ?? 10) * 60_000);
+      await ctx.session.record(a.url, async (r) => {
+        if (a.html && /html/.test(r.contentType) && r.status === 200) {
+          try {
+            const u = new URL(r.url);
+            if (`${u.pathname}${u.search}`.includes(a.html) && pages.length < 10) pages.push({ path: u.pathname.split('/').pop() || 'page', html: sanitizeHtml(await r.body()) });
+          } catch { /* 读不到就算了 */ }
+        }
+        const c = await describeCall(r, { keepQuery: a.keepQuery });
+        if (c) calls.push(c);
+      }, (a.minutes ?? 10) * 60_000);
       const result = dedupe(calls).filter((c) => !/google|baidu|cnzz|analytics/i.test(c.endpoint));
       const stamp = new Date(ctx.now()).toISOString().replace(/[:.]/g, '-').slice(0, 19);
       const target = resolve(ctx.cwd, a.out ?? `fdu-capture-${stamp}.json`);
       mkdirSync(dirname(target), { recursive: true });
       const path = safeTarget(dirname(target), basename(target));
       writeFileSync(path, JSON.stringify({ startUrl: a.url.split('?')[0], capturedAt: new Date(ctx.now()).toISOString(), calls: result }, null, 2));
-      return { path, calls: result.length, endpoints: result.map((c) => `${c.method} ${c.endpoint}`).slice(0, 50) };
+      const htmlFiles = pages.map((p, i) => {
+        const file = safeTarget(dirname(path), `${basename(path).replace(/\.json$/i, '')}.${i + 1}.${p.path.replace(/[^\w.-]/g, '_')}.html`);
+        writeFileSync(file, p.html);
+        return file;
+      });
+      if (a.html && !htmlFiles.length) ctx.log(`没有遇到地址里包含「${a.html}」的网页，没有保存 HTML。`);
+      return { path, calls: result.length, ...(htmlFiles.length ? { htmlFiles } : {}), endpoints: result.map((c) => `${c.method} ${c.endpoint}`).slice(0, 50) };
     },
   }),
   op({

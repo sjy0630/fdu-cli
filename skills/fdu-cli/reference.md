@@ -62,6 +62,7 @@ fdu doctor
 | `--out` | string |  | 结果保存到哪里，默认当前目录的 fdu-capture-时间.json |
 | `--minutes` | integer |  | 最多录多久（分钟），默认 10 |
 | `--keep-query` | boolean |  | 保留查询参数的值（如翻页参数的格式；令牌和长数字会遮掉，发出前请自己看一遍） |
+| `--html` | string |  | 另外保存地址里包含这段文字的网页的原始 HTML（如 day.asp），IP、令牌、长数字会遮掉 |
 
 ```bash
 fdu dev capture --url https://fdjwgl.fudan.edu.cn/student/home

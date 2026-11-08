@@ -137,3 +137,17 @@ export function dedupe(calls: CapturedCall[]): CapturedCall[] {
   }
   return [...map.values()];
 }
+
+/**
+ * --html：保存某个页面的原始 HTML（解析表格结构用）。保存前遮掉 IP、浏览器标识、令牌、长数字（学号等）、
+ * 隐藏输入框里的值；不改动其余内容，发出前请自己再看一遍。
+ */
+export function sanitizeHtml(html: string): string {
+  return redact(html
+    .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '<IP>')
+    .replace(/Mozilla\/5\.0 \([^)]*\)[^<"\n]*/g, '<浏览器标识>')
+    .replace(/(<input[^>]*type=["']?hidden["']?[^>]*value=)(["'])[^"']*\2/gi, '$1$2***$2')
+    .replace(/(<input[^>]*name=["']?(?:key|token|ticket|lt|execution)["']?[^>]*value=)(["'])[^"']*\2/gi, '$1$2***$2'))
+    .replace(/\d{11,}/g, '<数字>')
+    .slice(0, 3_000_000);
+}

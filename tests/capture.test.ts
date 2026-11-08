@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dedupe, describeCall, htmlOutline, maskPath, shapeOf } from '../src/services/capture';
+import { dedupe, describeCall, htmlOutline, maskPath, sanitizeHtml, shapeOf } from '../src/services/capture';
 import { safeHeaders } from '../src/core/auth';
 import { redact } from '../src/core/errors';
 
@@ -89,5 +89,19 @@ describe('第一次实测后补的', () => {
       .toEqual({ link: '<a>; rel="next", <b>; rel="last"', 'content-type': 'application/json' });
     expect(redact('Headers.append: "_csrf_token=HljbHjieol%2BIGSoxmOi%2Fx2gM8t76idpr; path=/; secure"')).toBe('Headers.append: "_csrf_token=***; path=/; secure"');
     expect(redact('bad value eyJhbGciOiJIUzI1NiJ9abcdefghijklmnopqrstuvwxyz0123')).toBe('bad value ***');
+  });
+});
+
+describe('--html 保存网页', () => {
+  it('遮掉 IP、浏览器标识、隐藏输入框的值、令牌和长数字，课表内容保留', () => {
+    const html = `<form><input type="hidden" name="key" value="tok-secret"><input name="b" value="H2"></form>
+      <table><tr><td>H2101</td><td colspan="3">MATH10026.09 [微积分A I](张永前){146人}</td></tr></table>
+      <div>175.186.248.11</div><div>Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/156.0.0.0 Safari/537.36</div>
+      <a href="room2.asp?id=4433&ticket=ST-123456-abcdefghijklmnopqrstuvwxyz0123">x</a><span>22307130001</span>`;
+    const out = sanitizeHtml(html);
+    expect(out).toContain('MATH10026.09 [微积分A I](张永前){146人}');
+    expect(out).toContain('colspan="3"');
+    expect(out).toContain('name="b" value="H2"');
+    expect(out).not.toMatch(/tok-secret|175\.186|Macintosh|ST-123456|22307130001/);
   });
 });
