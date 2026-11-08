@@ -1,6 +1,6 @@
 ---
 name: fdu-cli
-description: 查询复旦大学校园服务：eLearning 课程 / 作业 / DDL / 公告 / 课件下载，教务系统课表 / 考试 / 成绩 / 绩点排名 / 培养方案 / 选课结果，校园卡余额，宿舍电量，图书馆人数和文献检索，学校和院系官网通知，树洞和旦克课程评价，学生邮箱。用户问到自己在复旦的课程、作业、考试、成绩、校园生活，或要下载课件、找通知、找文献时使用。
+description: 查询复旦大学校园服务：eLearning 课程 / 作业 / DDL / 公告 / 课件下载，iCourse 课程回放和课堂文字稿，教务系统课表 / 考试 / 成绩 / 绩点排名 / 培养方案 / 选课结果，校园卡余额，宿舍电量，图书馆人数和文献检索，学校和院系官网通知，树洞和旦克课程评价，学生邮箱。用户问到自己在复旦的课程、作业、考试、成绩、校园生活，或要下载课件、找通知、找文献时使用。
 ---
 
 # 复旦校园服务（fdu-cli）
@@ -50,6 +50,7 @@ description: 查询复旦大学校园服务：eLearning 课程 / 作业 / DDL / 
 | 下学期选了什么课 | `fdu jw selected --which next` |
 | 下载课件 | 先 `fdu elearning files --course 线性代数 --search 第5讲`，再 `fdu elearning download --file <id> --out ./slides`（不覆盖已有文件） |
 | 课程公告 | `fdu elearning announcements --days 7` |
+| 总结某节课讲了什么 | `fdu icourse search --keyword 数据结构` → `fdu icourse lectures --course <课程号> --playback` → `fdu icourse transcript --course <课程号> --lecture <讲次号>`；文字稿长时按 `nextOffset` 接着读 |
 | 教务处 / 院系通知 | `fdu notices list --source 教务处`，细节 `fdu notices read --url <链接>` |
 | 找论文 | `fdu library search --query "..." --year-from 2022`，只依据摘要总结，给出 DOI 或链接 |
 | 哪个图书馆人少 | `fdu library seats` |
@@ -67,5 +68,6 @@ description: 查询复旦大学校园服务：eLearning 课程 / 作业 / DDL / 
 - `NEED_LOGIN` / `NEED_HOLE_LOGIN` / `NEED_MAIL_SETUP`：按上面的「登录」处理，然后重试一次。
 - `today` / `week` 某一类数据读不到时，结果里的 `errors` 写了是哪一类、为什么，其余照常返回。
 - `UPSTREAM`：学校系统出错或网络问题。部分院系网站、树洞只允许校园网访问，校外请用户连学校 VPN 或 `fdu login --webvpn`。
+- iCourse 回放「还没开放」是学校的审核期，告诉用户过一两天再看，不要尝试别的办法拿视频。文字稿是自动转写的，可能有错字，总结时以内容为主，不逐字引用。
 - `FORMAT_CHANGED`：学校页面改版了，告诉用户，别反复重试。
 - `NO_BROWSER`：用户需要安装 Chrome / Edge，或设置 `FDU_BROWSER`。

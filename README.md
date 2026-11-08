@@ -27,6 +27,7 @@ fdu mcp                        # 以 MCP 服务运行
 | 日历 | `fdu calendar export` | 导出 .ics：每次课、考试、作业截止（含提醒），重复导入不会重复添加 |
 | eLearning | `fdu elearning courses / assignments / todo / announcements / files / download` | 课程、作业和截止时间、公告、课件列表和下载 |
 | 教务系统 | `fdu jw semesters / timetable / exams / grades / gpa / program / selected` | 课表（含研究生）、考试、成绩和绩点、排名、培养方案完成情况、选课结果 |
+| iCourse 课程回放 | `fdu icourse search / terms / lectures / transcript` | 找课程、列出每一讲和有没有回放、读课堂文字稿（自动转写，带时间）；学校审核期内的回放如实说明未开放 |
 | 校园卡 | `fdu card balance` | 余额 |
 | 宿舍 | `fdu dorm electricity` | 剩余电量 |
 | 图书馆 | `fdu library seats / search` | 各馆在馆人数；文献检索（不用登录） |

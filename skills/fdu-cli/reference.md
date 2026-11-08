@@ -259,6 +259,64 @@ fdu jw timetable --semester 2026-2027学年1学期
 |---|---|---|---|
 | `--which` | string |  | current 当前学期（默认）、next 下学期，或学期名关键词 |
 
+## icourse
+
+### `fdu icourse search`
+
+在 iCourse（课程回放）里按课程名或老师找课程，返回课程号。默认找最新学期。
+
+登录：复旦账号 · 只读 · MCP：`icourse_search`
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `--keyword` | string | 是 | 课程名或老师名 |
+| `--term` | string |  | iCourse 的学期编号（来自 icourse terms），默认最新学期 |
+| `--limit` | integer |  | 最多几条，默认 20 |
+
+```bash
+fdu icourse search --keyword 数据结构
+```
+
+### `fdu icourse terms`
+
+iCourse 上有课程的学期和对应的学期编号（新的在前）。
+
+登录：复旦账号 · 只读 · MCP：`icourse_terms`
+
+### `fdu icourse lectures`
+
+一门课在 iCourse 上的全部讲次：日期、节次、主讲人、有没有回放，按日期排序。
+
+登录：复旦账号 · 只读 · MCP：`icourse_lectures`
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `--course` | string | 是 | 课程号（来自 icourse search） |
+| `--playback` | boolean |  | 只看有回放的 |
+
+```bash
+fdu icourse lectures --course 12345 --playback
+```
+
+### `fdu icourse transcript`
+
+某一讲的课堂文字稿（平台自动转写，带时间），可以用来总结这节课讲了什么。学校审核期内还没开放的回放会如实说明，不绕过。文字稿较长时分段返回。
+
+登录：复旦账号 · 只读 · MCP：`icourse_transcript`
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `--course` | string | 是 | 课程号 |
+| `--lecture` | string | 是 | 讲次号（来自 icourse lectures 的 lectureId） |
+| `--format` | text / segments |  | text 按分钟合成段落（默认）；segments 原始分段（开始、结束秒数） |
+| `--offset` | integer |  | 从第几个字开始（分段读取长文字稿用，默认 0） |
+| `--max-chars` | integer |  | 最多返回多少字，默认 30000 |
+
+```bash
+fdu icourse transcript --course 12345 --lecture 67890
+fdu icourse transcript --course 12345 --lecture 67890 --offset 30000
+```
+
 ## 校园卡
 
 ### `fdu card balance`

@@ -21,6 +21,8 @@ import { shanghaiDay, weekInfo } from './services/calendar';
 import { allSessions, overview, todayRange, weekRange, type OverviewDeps } from './services/overview';
 import { buildIcs, type IcsEvent } from './services/ics';
 import { runDoctor } from './services/doctor';
+import { clock, IcourseClient, type TranscriptSegment } from './services/icourse';
+import { NeedLoginError } from './core/fudan-auth';
 import { proxyFromEnv } from './core/session';
 
 /** 运行一个操作时能用到的东西 */
@@ -142,6 +144,30 @@ function mailClient(ctx: Ctx): ImapMailClient {
   const cfg = ctx.store.readJson<MailConfig>(MAIL);
   if (!cfg?.user || !cfg.password) throw new FduError('NEED_MAIL_SETUP', '还没有配置学生邮箱。', '运行 `fdu mail setup --user 学号@m.fudan.edu.cn`，输入网页邮箱里生成的客户端专用密码。');
   return new ImapMailClient(cfg);
+}
+
+/** iCourse 客户端：复用复旦账号登录状态，iCourse 自己的登录在无界面浏览器里自动完成 */
+function icourse(ctx: Ctx): IcourseClient {
+  if (!ctx.session.hasState()) throw new NeedLoginError('icourse');
+  return new IcourseClient({
+    fetch: (url, init) => ctx.session.raw(url, { timeoutMs: init?.timeoutMs }),
+    ensureWebvpn: () => ensureWebvpn(ctx.session),
+    openInBrowser: async (url, done) => { await ctx.session.withPage(url, (page) => done(page.url()), { headless: true, timeoutMs: 30_000, platform: 'icourse' }); },
+  });
+}
+
+/** 文字稿合成段落：每段大约一分钟，开头标时间 */
+export function transcriptText(segments: TranscriptSegment[], every = 60): string {
+  const paras: string[] = [];
+  let start = -Infinity;
+  let cur: string[] = [];
+  for (const s of segments) {
+    if (s.start - start >= every && cur.length) { paras.push(cur.join('')); cur = []; }
+    if (!cur.length) { start = s.start; cur.push(`[${clock(s.start)}] `); }
+    cur.push(s.text);
+  }
+  if (cur.length) paras.push(cur.join(''));
+  return paras.join('\n');
 }
 
 /** 汇总和导出日历用的三类数据 */
@@ -428,6 +454,66 @@ export const OPS: Op[] = [
     name: 'jw.selected', summary: '选课结果：某学期已选上的课、学分和上课时间。', login: 'uis', effect: 'read',
     params: { which: z.string().optional().describe('current 当前学期（默认）、next 下学期，或学期名关键词') },
     async run(ctx, a) { return readSelectedCourses(ctx.session.reader('jwfw'), a.which ?? 'current'); },
+  }),
+
+  // ======================= iCourse 课程回放 =======================
+  op({
+    name: 'icourse.search', summary: '在 iCourse（课程回放）里按课程名或老师找课程，返回课程号。默认找最新学期。', login: 'uis', effect: 'read',
+    params: { keyword: z.string().min(1).describe('课程名或老师名'), term: z.string().regex(/^\d+$/).optional().describe('iCourse 的学期编号（来自 icourse terms），默认最新学期'), limit: int('最多几条，默认 20', 1, 100) },
+    examples: ['fdu icourse search --keyword 数据结构'],
+    async run(ctx, a) { return icourse(ctx).search(a.keyword, { term: a.term, limit: a.limit }); },
+  }),
+  op({
+    name: 'icourse.terms', summary: 'iCourse 上有课程的学期和对应的学期编号（新的在前）。', login: 'uis', effect: 'read', params: {},
+    async run(ctx) { return icourse(ctx).terms(); },
+  }),
+  op({
+    name: 'icourse.lectures', summary: '一门课在 iCourse 上的全部讲次：日期、节次、主讲人、有没有回放，按日期排序。', login: 'uis', effect: 'read',
+    params: { course: z.string().regex(/^\d+$/).describe('课程号（来自 icourse search）'), playback: flag('只看有回放的') },
+    examples: ['fdu icourse lectures --course 12345 --playback'],
+    async run(ctx, a) {
+      const r = await icourse(ctx).lectures(a.course);
+      return a.playback ? { ...r, lectures: r.lectures.filter((l) => l.hasPlayback) } : r;
+    },
+  }),
+  op({
+    name: 'icourse.transcript', summary: '某一讲的课堂文字稿（平台自动转写，带时间），可以用来总结这节课讲了什么。学校审核期内还没开放的回放会如实说明，不绕过。文字稿较长时分段返回。',
+    login: 'uis', effect: 'read',
+    params: {
+      course: z.string().regex(/^\d+$/).describe('课程号'),
+      lecture: z.string().regex(/^\d+$/).describe('讲次号（来自 icourse lectures 的 lectureId）'),
+      format: z.enum(['text', 'segments']).optional().describe('text 按分钟合成段落（默认）；segments 原始分段（开始、结束秒数）'),
+      offset: z.coerce.number().int().min(0).optional().describe('从第几个字开始（分段读取长文字稿用，默认 0）'),
+      maxChars: z.coerce.number().int().min(1000).max(200_000).optional().describe('最多返回多少字，默认 30000'),
+    },
+    examples: ['fdu icourse transcript --course 12345 --lecture 67890', 'fdu icourse transcript --course 12345 --lecture 67890 --offset 30000'],
+    async run(ctx, a) {
+      const { segments } = await icourse(ctx).transcript(a.course, a.lecture);
+      if (!segments.length) return { course: a.course, lecture: a.lecture, empty: true, note: '这一讲没有文字稿（平台没有转写，或者没有声音）。' };
+      const max = a.maxChars ?? 30_000;
+      const offset = a.offset ?? 0;
+      const duration = clock(segments[segments.length - 1].end);
+      if (a.format === 'segments') {
+        // 按字数切：从 offset 个字之后的分段开始
+        let seen = 0;
+        let used = 0;
+        const out: { start: string; end: string; text: string }[] = [];
+        let next: number | undefined;
+        for (const s of segments) {
+          const len = s.text.length;
+          if (seen + len <= offset) { seen += len; continue; }
+          if (used + len > max && out.length) { next = seen; break; }
+          out.push({ start: clock(s.start), end: clock(s.end), text: s.text });
+          used += len;
+          seen += len;
+        }
+        return { course: a.course, lecture: a.lecture, duration, segments: out, ...(next !== undefined ? { nextOffset: next } : {}) };
+      }
+      const text = transcriptText(segments);
+      const part = text.slice(offset, offset + max);
+      const nextOffset = offset + max < text.length ? offset + max : undefined;
+      return { course: a.course, lecture: a.lecture, duration, totalChars: text.length, offset, text: part, ...(nextOffset !== undefined ? { nextOffset, note: `还有 ${text.length - nextOffset} 字，用 --offset ${nextOffset} 继续读。` } : {}) };
+    },
   }),
 
   // ======================= 校园生活 =======================

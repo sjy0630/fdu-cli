@@ -2,7 +2,7 @@
   "name": "fdu-cli",
   "displayName": "复旦校园服务",
   "version": "0.1.0",
-  "description": "复旦 eLearning、教务（课表 / 考试 / 成绩 / 培养方案 / 选课）、校园卡、宿舍电量、图书馆、学校通知、树洞与旦克、学生邮箱。包含 fdu 技能和 MCP 服务（需要先安装 fdu 命令行）。",
+  "description": "复旦 eLearning、iCourse 课程回放文字稿、教务（课表 / 考试 / 成绩 / 培养方案 / 选课）、校园卡、宿舍电量、图书馆、学校通知、树洞与旦克、学生邮箱。包含 fdu 技能和 MCP 服务（需要先安装 fdu 命令行）。",
   "author": { "name": "sjy0630" },
   "license": "MIT",
   "keywords": ["fudan", "复旦", "elearning", "campus", "mcp"]
