@@ -1,3 +1,4 @@
+import { load } from 'cheerio';
 import { NeedLoginError } from '../core/fudan-auth';
 import type { CampusReader } from '../core/types';
 import { readStudentId } from './grades';
@@ -85,6 +86,8 @@ export async function readExams(reader: CampusReader, opts: { all?: boolean; now
 const LESSON_SEARCH = 'https://fdjwgl.fudan.edu.cn/student/for-std/lesson-search';
 
 export interface Lesson {
+  /** 教学班的内部 id（查教学大纲用） */
+  id?: string;
   /** 教学班代码，如 COMP130004.01 */
   code: string;
   course: string;
@@ -115,6 +118,7 @@ export function parseLessons(body: string): { lessons: Lesson[]; page: number; p
     const teachers = ((r.teacherAssignmentList ?? []) as { person?: Named }[]).map((t) => nameOf(t.person)).filter((x): x is string => !!x);
     const schedule = ((r.scheduleText as { dateTimePlacePersonText?: { textZh?: unknown } } | undefined)?.dateTimePlacePersonText?.textZh);
     return {
+      ...(r.id !== undefined && r.id !== null ? { id: String(r.id) } : {}),
       code: String(r.code ?? ''),
       course: nameOf(course as Named) ?? nameOf(r as Named) ?? '',
       ...(typeof course.code === 'string' ? { courseCode: course.code } : {}),
@@ -144,4 +148,48 @@ export async function readLessons(reader: CampusReader, opts: { keyword: string;
   const res = await reader.getText(`${LESSON_SEARCH}/semester/${semester.id}/search/${studentId}?${qs}`, { headers: { 'X-Requested-With': 'XMLHttpRequest', Accept: 'application/json' } });
   if (res.status >= 400) throw new Error(`教务系统返回 ${res.status}`);
   return { semester: semester.name, keyword: opts.keyword, ...parseLessons(res.text) };
+}
+
+// ---------------- 教学大纲 ----------------
+
+/** 网页 → 纯文本：去掉脚本和样式，段落、表格行换行，单元格之间用「 | 」隔开 */
+export function htmlToText(html: string): string {
+  const $ = load(html);
+  $('script, style, noscript, head, nav, header, footer').remove();
+  $('br').replaceWith('\n');
+  $('td, th').each((_, el) => { $(el).append(' | '); });
+  $('p, div, tr, li, h1, h2, h3, h4, h5, h6, table, section').each((_, el) => { $(el).append('\n'); });
+  return $.root().text()
+    .replace(/[ \t\u00a0]+/g, ' ')
+    .replace(/ ?\| ?(\n|$)/g, '$1')
+    .replace(/\n\s*\n+/g, '\n')
+    .split('\n').map((l) => l.trim()).filter(Boolean).join('\n');
+}
+
+/**
+ * 某个教学班的教学大纲（全校开课查询里「教学大纲」那一页），转成纯文本给 AI 读。
+ * 页面内容靠脚本加载时，在无界面浏览器里等加载完再读。
+ */
+export async function readSyllabus(reader: CampusReader, lessonId: string, maxChars = 30_000) {
+  if (!/^\d+$/.test(lessonId)) throw Object.assign(new Error('教学班 id 应该是数字（来自 fdu jw lessons 的 id）。'), { code: 'BAD_ARGS' });
+  const xhr = { headers: { 'X-Requested-With': 'XMLHttpRequest', Accept: 'application/json' } };
+  // 教务系统先问一下这门课能不能看大纲；返回的提示原样附上
+  let notice: string | undefined;
+  try {
+    const c = await reader.getText(`${LESSON_SEARCH}/check-can-info?id=${lessonId}`, xhr);
+    const j = JSON.parse(c.text) as { textZh?: unknown } | null;
+    if (j && typeof j.textZh === 'string' && j.textZh.trim()) notice = j.textZh.trim();
+  } catch { /* 读不到不影响 */ }
+  const url = `${LESSON_SEARCH}/teachingSyllabusInfo/${lessonId}`;
+  const page = await reader.getText(url);
+  if (page.status >= 400) throw new Error(`教务系统返回 ${page.status}`);
+  let text = htmlToText(page.text);
+  if (text.length < 120 && reader.render) text = htmlToText(await reader.render(url, (h) => htmlToText(h).length >= 200));
+  return {
+    lessonId,
+    ...(notice ? { notice } : {}),
+    available: text.length >= 40,
+    ...(text.length > maxChars ? { truncated: true } : {}),
+    text: text.slice(0, maxChars),
+  };
 }

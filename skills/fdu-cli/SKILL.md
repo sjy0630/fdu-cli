@@ -53,7 +53,7 @@ description: 查询复旦大学校园服务：eLearning 课程 / 作业 / DDL / 
 | 总结某节课讲了什么 | `fdu icourse search --keyword 数据结构` → `fdu icourse lectures --course <课程号> --playback` → `fdu icourse transcript --course <课程号> --lecture <讲次号>`；文字稿长时按 `nextOffset` 接着读 |
 | 教务处 / 院系通知 | `fdu notices list --source 教务处`，细节 `fdu notices read --url <链接>` |
 | 借的书什么时候到期 | `fdu library loans`（没登录图书馆时请用户在终端运行 `fdu library login`）；不能续借，续借请用户自己去图书馆网站 |
-| 选课：某门课谁开、几点、还有名额吗 | `fdu jw lessons --keyword 数据结构`（下学期加 `--semester`） |
+| 选课：某门课谁开、几点、还有名额吗、讲什么怎么考 | `fdu jw lessons --keyword 数据结构`（下学期加 `--semester`）；教学大纲用结果里的 id：`fdu jw syllabus --lesson <id>`，或者 `--syllabus` 一起读前 5 个；再结合 `fdu danke reviews` 的评价给建议 |
 | 找论文 | `fdu library search --query "..." --year-from 2022`，只依据摘要总结，给出 DOI 或链接 |
 | 哪个图书馆人少 | `fdu library seats` |
 | 找教室自习 / 哪间教室合适 / 某间教室今天的安排 | `fdu rooms day --building H2`（H2 二教、HGX 光华楼……）：每间教室的楼层、座位、现在的状态、全天安排和空闲时段，按用户的需求（离哪近、要多大、要待到几点、避开下课人流）自己挑；全校先用 `fdu rooms day --brief` 看大概。只要空教室名单也可以用 `fdu rooms free`。需要登录时请用户运行 `fdu rooms login` |

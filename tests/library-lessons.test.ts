@@ -1,3 +1,4 @@
+import type { Ctx } from '../src/ops';
 import { describe, expect, it } from 'vitest';
 import { NeedLoginError } from '../src/core/fudan-auth';
 import type { CampusReader } from '../src/core/types';
@@ -83,5 +84,69 @@ describe('全校开课查询', () => {
     expect(u.pathname).toBe('/student/for-std/lesson-search/semester/527/search/9001');
     expect(Object.fromEntries(u.searchParams)).toEqual({ queryPage__: '2,20', courseNameZhLike: '数据结构' });
     expect(r).toMatchObject({ semester: '2026-2027学年1学期', keyword: '数据结构', page: 2 });
+  });
+});
+
+describe('教学大纲', () => {
+  it('网页转纯文本：段落换行，表格单元格用 | 隔开，去掉脚本', async () => {
+    const { htmlToText } = await import('../src/services/jw');
+    const t = htmlToText('<html><head><title>x</title><script>var a=1</script></head><body><h3>课程目标</h3><p>掌握线性表、树、图。</p><table><tr><th>周次</th><th>内容</th></tr><tr><td>1</td><td>绪论</td></tr></table></body></html>');
+    expect(t).toBe('课程目标\n掌握线性表、树、图。\n周次 | 内容\n1 | 绪论');
+  });
+
+  it('先问能不能看并附上提示；页面靠脚本加载时用浏览器读', async () => {
+    const { readSyllabus } = await import('../src/services/jw');
+    const rendered: string[] = [];
+    const reader: CampusReader = {
+      getText: async (url) => {
+        if (url.includes('check-can-info')) return { url, status: 200, text: JSON.stringify({ textZh: '教学大纲由任课教师提供（演示）' }) };
+        return { url, status: 200, text: '<html><body><div id="app"></div></body></html>' };
+      },
+      render: async (url) => { rendered.push(url); return `<div><h3>考核方式</h3><p>${'平时作业 40%，期末考试 60%。'.repeat(10)}</p></div>`; },
+    };
+    const r = await readSyllabus(reader, '1037803');
+    expect(rendered).toEqual(['https://fdjwgl.fudan.edu.cn/student/for-std/lesson-search/teachingSyllabusInfo/1037803']);
+    expect(r).toMatchObject({ lessonId: '1037803', notice: '教学大纲由任课教师提供（演示）', available: true });
+    expect(r.text.startsWith('考核方式\n平时作业 40%')).toBe(true);
+    await expect(readSyllabus(reader, '../x')).rejects.toThrow('数字');
+  });
+
+  it('开课查询结果带上教学班 id', () => {
+    const r = parseLessons(JSON.stringify({ data: [{ id: 1037803, code: 'X.01', course: { nameZh: '课' } }], _page_: {} }));
+    expect(r.lessons[0].id).toBe('1037803');
+  });
+});
+
+describe('图书馆令牌', () => {
+  it('登录时保存的令牌直接带在请求头里；过期或被拒时删掉并要求重新登录', async () => {
+    const { mkdtempSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { Store } = await import('../src/core/store');
+    const { findOp } = await import('../src/ops');
+    const { runOp } = await import('../src/run');
+    process.env.FDU_HOME = mkdtempSync(join(tmpdir(), 'fdu-lib-'));
+    const store = new Store();
+    store.writeJson('library.json', { token: 'tok-demo-0123456789abcdef' });
+    const seen: Record<string, string>[] = [];
+    const ctx = {
+      store, now: () => Date.parse('2026-11-08T04:00:00Z'), log: () => undefined,
+      session: {
+        hasState: () => true,
+        raw: async (url: string, init: { headers: Record<string, string> }) => {
+          seen.push(init.headers);
+          const body = url.includes('getReaderInfo') ? { code: 0, data: { canLoanTotal: 30, name: '张小明' } } : { code: 0, data: { list: [] } };
+          return { status: 200, url, contentType: 'application/json', text: JSON.stringify(body) };
+        },
+      },
+    } as unknown as Ctx;
+    const op = findOp('library.loans')!;
+    expect(await runOp(op, ctx, {})).toMatchObject({ ok: true, data: { canBorrow: 30, count: 0 } });
+    expect(seen[0].access_token).toBe('tok-demo-0123456789abcdef');
+    (ctx.session as unknown as { raw: unknown }).raw = async (url: string) => ({ status: 401, url, contentType: 'application/json', text: '{}' });
+    expect(await runOp(op, ctx, {})).toMatchObject({ ok: false, error: { code: 'NEED_LOGIN', hint: expect.stringContaining('fdu library login') } });
+    expect(store.readJson('library.json')).toBeNull();
+    store.writeJson('library.json', { token: 't', expiresAt: '2026-11-01T00:00:00Z' });
+    expect(await runOp(op, ctx, {})).toMatchObject({ ok: false, error: { code: 'NEED_LOGIN' } });
   });
 });

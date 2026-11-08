@@ -1298,6 +1298,7 @@ async function readGpaRank(reader, studentId, studentNumber) {
 }
 
 // src/services/jw.ts
+import { load as load5 } from "cheerio";
 async function readSemesters(reader) {
   for (let attempt = 0; ; attempt++) {
     const page = await reader.getText(UNDERGRAD_TABLE_URL);
@@ -1366,6 +1367,7 @@ function parseLessons(body3) {
     const teachers = (r.teacherAssignmentList ?? []).map((t) => nameOf(t.person)).filter((x) => !!x);
     const schedule = r.scheduleText?.dateTimePlacePersonText?.textZh;
     return {
+      ...r.id !== void 0 && r.id !== null ? { id: String(r.id) } : {},
       code: String(r.code ?? ""),
       course: nameOf(course) ?? nameOf(r) ?? "",
       ...typeof course.code === "string" ? { courseCode: course.code } : {},
@@ -1393,6 +1395,41 @@ async function readLessons(reader, opts) {
   const res = await reader.getText(`${LESSON_SEARCH}/semester/${semester.id}/search/${studentId}?${qs}`, { headers: { "X-Requested-With": "XMLHttpRequest", Accept: "application/json" } });
   if (res.status >= 400) throw new Error(`\u6559\u52A1\u7CFB\u7EDF\u8FD4\u56DE ${res.status}`);
   return { semester: semester.name, keyword: opts.keyword, ...parseLessons(res.text) };
+}
+function htmlToText(html) {
+  const $ = load5(html);
+  $("script, style, noscript, head, nav, header, footer").remove();
+  $("br").replaceWith("\n");
+  $("td, th").each((_, el) => {
+    $(el).append(" | ");
+  });
+  $("p, div, tr, li, h1, h2, h3, h4, h5, h6, table, section").each((_, el) => {
+    $(el).append("\n");
+  });
+  return $.root().text().replace(/[ \t\u00a0]+/g, " ").replace(/ ?\| ?(\n|$)/g, "$1").replace(/\n\s*\n+/g, "\n").split("\n").map((l) => l.trim()).filter(Boolean).join("\n");
+}
+async function readSyllabus(reader, lessonId, maxChars = 3e4) {
+  if (!/^\d+$/.test(lessonId)) throw Object.assign(new Error("\u6559\u5B66\u73ED id \u5E94\u8BE5\u662F\u6570\u5B57\uFF08\u6765\u81EA fdu jw lessons \u7684 id\uFF09\u3002"), { code: "BAD_ARGS" });
+  const xhr = { headers: { "X-Requested-With": "XMLHttpRequest", Accept: "application/json" } };
+  let notice;
+  try {
+    const c = await reader.getText(`${LESSON_SEARCH}/check-can-info?id=${lessonId}`, xhr);
+    const j = JSON.parse(c.text);
+    if (j && typeof j.textZh === "string" && j.textZh.trim()) notice = j.textZh.trim();
+  } catch {
+  }
+  const url = `${LESSON_SEARCH}/teachingSyllabusInfo/${lessonId}`;
+  const page = await reader.getText(url);
+  if (page.status >= 400) throw new Error(`\u6559\u52A1\u7CFB\u7EDF\u8FD4\u56DE ${page.status}`);
+  let text = htmlToText(page.text);
+  if (text.length < 120 && reader.render) text = htmlToText(await reader.render(url, (h) => htmlToText(h).length >= 200));
+  return {
+    lessonId,
+    ...notice ? { notice } : {},
+    available: text.length >= 40,
+    ...text.length > maxChars ? { truncated: true } : {},
+    text: text.slice(0, maxChars)
+  };
 }
 
 // src/services/library-search.ts
@@ -1749,7 +1786,7 @@ var ImapMailClient = class {
 };
 
 // src/services/notice-parse.ts
-import { load as load5 } from "cheerio";
+import { load as load6 } from "cheerio";
 var ROW = "li, tr, dd, dl, article, .news, .item, .list-item, .news_list > div, .list > div";
 var FILE = /\.(pdf|docx?|xlsx?|pptx?|zip|rar|jpe?g|png|gif)(\?|$)/i;
 function validDate(y, m, d) {
@@ -1775,7 +1812,7 @@ function cleanText(s) {
   return s.replace(/\s+/g, " ").trim();
 }
 function parseNoticeList(html, pageUrl, opts = {}) {
-  const $ = load5(html);
+  const $ = load6(html);
   const base = new URL(pageUrl);
   const found = /* @__PURE__ */ new Map();
   $("a[href]").each((_, el) => {
@@ -1835,7 +1872,7 @@ function rowTitle($, a) {
 }
 var BODY = [".wp_articlecontent", ".v_news_content", "#vsb_content", ".article-content", ".article_content", ".content-con", ".TRS_Editor", ".entry-content", "article", ".article", ".content", "#content"];
 function parseNoticeDetail(html, pageUrl) {
-  const $ = load5(html);
+  const $ = load6(html);
   $("script, style, noscript, nav, header, footer").remove();
   const hasContent = (x) => cleanText($(x).text()).length > 30 || $(x).find("[pdfsrc], iframe[src], embed[src], img").length > 0;
   let body3;
@@ -2623,7 +2660,7 @@ var IcourseClient = class _IcourseClient {
 };
 
 // src/services/ecard.ts
-import { load as load6 } from "cheerio";
+import { load as load7 } from "cheerio";
 var ECARD = "https://ecard.fudan.edu.cn";
 var CONSUME_INDEX = `${ECARD}/epay/consume/index`;
 var CONSUME_QUERY = `${ECARD}/epay/consume/query`;
@@ -2632,11 +2669,11 @@ var DT = /(\d{4})[.\-/年](\d{1,2})[.\-/月](\d{1,2})日?\s*(?:(\d{1,2}):(\d{2})
 var TIME_ONLY = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/;
 var shanghaiIso = (y, mo, d, h = "0", mi = "0", s = "0") => new Date(Date.UTC(+y, +mo - 1, +d, +h - 8, +mi, +s)).toISOString();
 function parseCsrf(html) {
-  return load6(html)('meta[name="_csrf"]').attr("content")?.trim() || void 0;
+  return load7(html)('meta[name="_csrf"]').attr("content")?.trim() || void 0;
 }
 function parseConsumePage(body3) {
   const inner = /<!\[CDATA\[([\s\S]*?)\]\]>/.exec(body3)?.[1] ?? body3;
-  const $ = load6(inner);
+  const $ = load7(inner);
   const pageText = $.root().text().replace(/\s+/g, "");
   const pages = /\d+\/(\d+)页/.exec(pageText)?.[1];
   const records = [];
@@ -2832,7 +2869,7 @@ async function venueCalendar(getJson, venueId, from, to) {
 }
 
 // src/services/rooms.ts
-import { load as load7 } from "cheerio";
+import { load as load8 } from "cheerio";
 var ROOMS_ORIGIN = "http://10.64.130.6";
 var BUILDINGS = ["H2", "H3", "H4", "H5", "H6", "HGX", "HQ", "JA", "JB", "F1", "F2", "Z2"];
 function roomsDay(day) {
@@ -2865,7 +2902,7 @@ function occupant($, td) {
   return { kind: borrow ? "borrow" : "other", tags, text, ...borrow ? { name: text.replace(/^临借\s*/, "") } : {} };
 }
 function parseDayPage(html) {
-  const $ = load7(html);
+  const $ = load8(html);
   const periods = [];
   $('td[id^="td0"]').each((_, el) => {
     const id = $(el).attr("id") ?? "";
@@ -2995,7 +3032,7 @@ function roomsReport(building, page, opts = {}) {
 }
 
 // src/services/capture.ts
-import { load as load8 } from "cheerio";
+import { load as load9 } from "cheerio";
 var MAX_DEPTH = 6;
 function shapeOf(value, depth = 0) {
   if (value === null) return "null";
@@ -3018,7 +3055,7 @@ function shapeOf(value, depth = 0) {
   return typeof value;
 }
 function htmlOutline(html) {
-  const $ = load8(html);
+  const $ = load9(html);
   const tables = $("table").map((_, t) => [$(t).find("th").map((_i, th) => $(th).text().replace(/\s+/g, " ").trim()).get().filter(Boolean).slice(0, 20)]).get();
   const forms = $("form").map((_, f) => ({ action: $(f).attr("action")?.split("?")[0], fields: $(f).find("input[name],select[name],textarea[name]").map((_i, x) => $(x).attr("name")).get().filter((n) => !/csrf|token|password/i.test(n)) })).get();
   return { title: $("title").first().text().trim() || void 0, tables: tables.filter((t) => t.length), forms };
@@ -3281,8 +3318,31 @@ async function storageEntries(page) {
   })()`).then((v) => Array.isArray(v) ? v : []).catch(() => []);
 }
 var LIB_LOGIN_HINT = "\u8FD0\u884C `fdu library login`\uFF0C\u5728\u6253\u5F00\u7684\u56FE\u4E66\u9986\u9875\u9762\u91CC\u767B\u5F55\u4E00\u6B21\uFF08\u4E4B\u540E\u4F1A\u8BB0\u4F4F\uFF09\u3002";
+var LIB_TOKEN = "library.json";
 async function withLibrary(ctx, work) {
   if (!ctx.session.hasState()) throw new NeedLoginError("jwfw");
+  const saved = ctx.store.readJson(LIB_TOKEN);
+  if (saved?.token) {
+    if (saved.expiresAt && Date.parse(saved.expiresAt) < ctx.now()) {
+      ctx.store.remove(LIB_TOKEN);
+      throw new FduError("NEED_LOGIN", "\u56FE\u4E66\u9986\u767B\u5F55\u5DF2\u8FC7\u671F\u3002", LIB_LOGIN_HINT);
+    }
+    const headers = { access_token: saved.token, Accept: "application/json", Origin: "https://opac.fudan.edu.cn", Referer: OPAC };
+    const getJson = async (url) => {
+      const r = await ctx.session.raw(url, { headers });
+      if (!/json/.test(r.contentType) && r.status !== 401) return ctx.session.browserFetch(url, { headers });
+      return r;
+    };
+    try {
+      return await work(getJson);
+    } catch (e) {
+      if (e instanceof FduError && e.code === "NEED_LOGIN") {
+        ctx.store.remove(LIB_TOKEN);
+        throw new FduError("NEED_LOGIN", "\u56FE\u4E66\u9986\u767B\u5F55\u5DF2\u8FC7\u671F\u3002", LIB_LOGIN_HINT);
+      }
+      throw e;
+    }
+  }
   const started = Date.now();
   let result;
   let failure;
@@ -3378,6 +3438,7 @@ var OPS = [
     mcp: false,
     params: {},
     async run(ctx) {
+      ctx.store.remove("library.json");
       return { removed: ctx.session.clear(), cacheCleared: ctx.cache?.clear() ?? 0 };
     }
   }),
@@ -3757,11 +3818,34 @@ var OPS = [
       keyword: z.string().min(1).describe("\u8BFE\u7A0B\u540D\uFF08\u5305\u542B\u5373\u53EF\uFF09\uFF0C\u5982\u300C\u6570\u636E\u7ED3\u6784\u300D"),
       semester: z.string().optional().describe("\u5B66\u671F id \u6216\u540D\u79F0\u5173\u952E\u8BCD\uFF0C\u9ED8\u8BA4\u5F53\u524D\u5B66\u671F"),
       page: int2("\u7B2C\u51E0\u9875\uFF0C\u9ED8\u8BA4 1", 1, 500),
-      size: int2("\u6BCF\u9875\u51E0\u6761\uFF0C\u9ED8\u8BA4 20", 1, 100)
+      size: int2("\u6BCF\u9875\u51E0\u6761\uFF0C\u9ED8\u8BA4 20", 1, 100),
+      syllabus: flag("\u540C\u65F6\u8BFB\u6BCF\u4E2A\u6559\u5B66\u73ED\u7684\u6559\u5B66\u5927\u7EB2\uFF08\u6700\u591A\u524D 5 \u4E2A\uFF0C\u8F83\u6162\uFF09")
     },
-    examples: ["fdu jw lessons --keyword \u6570\u636E\u7ED3\u6784", "fdu jw lessons --keyword \u7EBF\u6027\u4EE3\u6570 --semester 2026-2027\u5B66\u5E742\u5B66\u671F"],
+    examples: ["fdu jw lessons --keyword \u6570\u636E\u7ED3\u6784", "fdu jw lessons --keyword \u7EBF\u6027\u4EE3\u6570 --semester 2026-2027\u5B66\u5E742\u5B66\u671F", "fdu jw lessons --keyword \u6570\u636E\u7ED3\u6784 --syllabus"],
     async run(ctx, a) {
-      return readLessons(ctx.session.reader("jwfw"), { keyword: a.keyword, semester: a.semester, page: a.page, size: a.size });
+      const reader = ctx.session.reader("jwfw");
+      const r = await readLessons(reader, { keyword: a.keyword, semester: a.semester, page: a.page, size: a.size });
+      if (!a.syllabus) return r;
+      const lessons = [];
+      for (const [i, l] of r.lessons.entries()) {
+        if (i >= 5 || !l.id) {
+          lessons.push(l);
+          continue;
+        }
+        lessons.push({ ...l, syllabus: await readSyllabus(reader, l.id, 8e3).catch((e) => ({ error: e.message })) });
+      }
+      return { ...r, lessons };
+    }
+  }),
+  op({
+    name: "jw.syllabus",
+    summary: "\u67D0\u4E2A\u6559\u5B66\u73ED\u7684\u6559\u5B66\u5927\u7EB2\uFF08\u8BFE\u7A0B\u76EE\u6807\u3001\u5185\u5BB9\u5B89\u6392\u3001\u8003\u6838\u65B9\u5F0F\u3001\u6559\u6750\u7B49\uFF09\uFF0C\u8F6C\u6210\u7EAF\u6587\u672C\u3002\u6559\u5B66\u73ED id \u6765\u81EA fdu jw lessons\u3002",
+    login: "uis",
+    effect: "read",
+    params: { lesson: z.string().regex(/^\d+$/).describe("\u6559\u5B66\u73ED id\uFF08fdu jw lessons \u7ED3\u679C\u91CC\u7684 id\uFF09"), maxChars: int2("\u6700\u591A\u8FD4\u56DE\u591A\u5C11\u5B57\uFF0C\u9ED8\u8BA4 30000", 1e3, 2e5) },
+    examples: ["fdu jw syllabus --lesson 1037803"],
+    async run(ctx, a) {
+      return readSyllabus(ctx.session.reader("jwfw"), a.lesson, a.maxChars);
     }
   }),
   op({
@@ -4058,19 +4142,31 @@ var OPS = [
     params: {},
     async run(ctx) {
       let ok = false;
+      let token;
+      let expiresIn;
       let listening = false;
       ctx.log("\u5DF2\u6253\u5F00\u56FE\u4E66\u9986\u9875\u9762\uFF1A\u8BF7\u70B9\u53F3\u4E0A\u89D2\u300C\u767B\u5F55\u300D\uFF0C\u767B\u5F55\u540E\u8FDB\u5165\u300C\u6211\u7684\u501F\u9605\u300D\uFF0C\u770B\u5230\u501F\u9605\u4FE1\u606F\u540E\u7A97\u53E3\u4F1A\u81EA\u52A8\u5173\u95ED\u3002");
       await ctx.session.withPage(OPAC, async (page) => {
         if (!listening) {
           listening = true;
           page.on("response", (res) => {
-            if (!res.url().includes("fdulspgw.fudan.edu.cn/alsp/open-api/elib5/") || res.status() !== 200) return;
-            if (res.request().headers().access_token) ok = true;
+            if (!res.url().includes("fdulspgw.fudan.edu.cn/alsp/open-api/") || res.status() !== 200) return;
+            if (res.url().includes("/oauth2/getToken")) {
+              void res.json().then((j) => {
+                if (typeof j?.data?.expires_in === "number") expiresIn = j.data.expires_in;
+              }).catch(() => void 0);
+            }
+            const t = res.request().headers().access_token;
+            if (t && res.url().includes("/elib5/")) {
+              token = t;
+              ok = true;
+            }
           });
         }
         return ok;
       }, { headless: false, timeoutMs: 3e5 });
-      if (!ok) throw new FduError("NEED_LOGIN", "\u6CA1\u6709\u5B8C\u6210\u56FE\u4E66\u9986\u767B\u5F55\u3002", "\u91CD\u65B0\u8FD0\u884C `fdu library login`\uFF0C\u767B\u5F55\u540E\u70B9\u5F00\u300C\u6211\u7684\u501F\u9605\u300D\u3002");
+      if (!ok || !token) throw new FduError("NEED_LOGIN", "\u6CA1\u6709\u5B8C\u6210\u56FE\u4E66\u9986\u767B\u5F55\u3002", "\u91CD\u65B0\u8FD0\u884C `fdu library login`\uFF0C\u767B\u5F55\u540E\u70B9\u5F00\u300C\u6211\u7684\u501F\u9605\u300D\u3002");
+      ctx.store.writeJson(LIB_TOKEN, { token, savedAt: new Date(ctx.now()).toISOString(), ...expiresIn ? { expiresAt: new Date(ctx.now() + expiresIn * 1e3).toISOString() } : {} });
       await ctx.session.save();
       return { loggedIn: true };
     }

@@ -26,7 +26,7 @@ fdu mcp                        # 以 MCP 服务运行
 | 校历 | `fdu jw week` | 第几教学周、星期几、是否放假（按学校校历） |
 | 日历 | `fdu calendar export` | 导出 .ics：每次课、考试、作业截止（含提醒），重复导入不会重复添加 |
 | eLearning | `fdu elearning courses / assignments / todo / announcements / files / download` | 课程、作业和截止时间、公告、课件列表和下载 |
-| 教务系统 | `fdu jw semesters / timetable / exams / grades / gpa / program / selected / lessons` | 课表（含研究生）、考试、成绩和绩点、排名、培养方案完成情况、选课结果、全校开课查询 |
+| 教务系统 | `fdu jw semesters / timetable / exams / grades / gpa / program / selected / lessons / syllabus` | 课表（含研究生）、考试、成绩和绩点、排名、培养方案完成情况、选课结果、全校开课查询和教学大纲 |
 | iCourse 课程回放 | `fdu icourse search / terms / lectures / transcript` | 找课程、列出每一讲和有没有回放、读课堂文字稿（自动转写，带时间）；学校审核期内的回放如实说明未开放 |
 | 校园卡 | `fdu card balance`、`fdu card transactions` | 余额；消费记录和统计（总支出、日均、按商户和餐次） |
 | 教室 | `fdu rooms day`、`fdu rooms free` | 各教学楼每间教室的楼层、座位、现在空着还是在用、全天的课和临时借用、空闲时段，按楼层汇总；或只列空教室（第一次先 `fdu rooms login`；校外经 WebVPN） |
@@ -87,6 +87,7 @@ fdu mail setup --user 学号@m.fudan.edu.cn    # 学生邮箱：输入网页邮�
 | `state.json` | 统一身份认证登录后的 Cookie（不含密码） |
 | `hole.json` | 树洞令牌 |
 | `mail.json` | 邮箱 IMAP 配置和客户端专用密码（**明文**） |
+| `library.json` | 图书馆「我的借阅」的令牌（`fdu library login` 时保存，过期后重新登录） |
 | `cache/` | 查询结果的缓存（含成绩等，和上面一样只有你能读） |
 
 这些文件能代表你登录学校系统：不要同步到网盘、提交到仓库或发给别人。`fdu logout`（同时清空缓存）、`fdu hole logout`、`fdu mail forget`、`fdu cache clear` 分别删除。

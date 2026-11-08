@@ -11,7 +11,7 @@ import { readCardBalance, readLibrary } from './services/campus-life';
 import { readElectricity } from './services/dorm';
 import { CanvasClient, isAssignmentDone, type CanvasCourse } from './services/elearning';
 import { readGpaRank, readGrades, readStudentId } from './services/grades';
-import { readExams, readLessons, readSemesters, readTimetable } from './services/jw';
+import { readExams, readLessons, readSemesters, readSyllabus, readTimetable } from './services/jw';
 import { LibrarySearch } from './services/library-search';
 import { OPAC, readHistory, readLoans, type GetJson as LibGetJson } from './services/library-account';
 import type { Page } from 'playwright-core';
@@ -251,9 +251,32 @@ async function storageEntries(page: Page): Promise<[string, string][]> {
 
 const LIB_LOGIN_HINT = '运行 `fdu library login`，在打开的图书馆页面里登录一次（之后会记住）。';
 
-/** 在无界面浏览器里打开图书馆页面，拿到令牌后用页面里的请求读借阅接口 */
+const LIB_TOKEN = 'library.json';
+
+/**
+ * 读借阅接口：优先用 fdu library login 时保存的令牌直接请求；
+ * 没有保存的令牌时，退回在无界面浏览器里打开图书馆页面找令牌。
+ */
 async function withLibrary<T>(ctx: Ctx, work: (getJson: LibGetJson) => Promise<T>): Promise<T> {
   if (!ctx.session.hasState()) throw new NeedLoginError('jwfw');
+  const saved = ctx.store.readJson<{ token?: string; expiresAt?: string }>(LIB_TOKEN);
+  if (saved?.token) {
+    if (saved.expiresAt && Date.parse(saved.expiresAt) < ctx.now()) {
+      ctx.store.remove(LIB_TOKEN);
+      throw new FduError('NEED_LOGIN', '图书馆登录已过期。', LIB_LOGIN_HINT);
+    }
+    const headers = { access_token: saved.token, Accept: 'application/json', Origin: 'https://opac.fudan.edu.cn', Referer: OPAC };
+    const getJson: LibGetJson = async (url) => {
+      const r = await ctx.session.raw(url, { headers });
+      // 被网关拦下（不是数据）时改在浏览器里发
+      if (!/json/.test(r.contentType) && r.status !== 401) return ctx.session.browserFetch(url, { headers });
+      return r;
+    };
+    try { return await work(getJson); } catch (e) {
+      if (e instanceof FduError && e.code === 'NEED_LOGIN') { ctx.store.remove(LIB_TOKEN); throw new FduError('NEED_LOGIN', '图书馆登录已过期。', LIB_LOGIN_HINT); }
+      throw e;
+    }
+  }
   const started = Date.now();
   let result: { value: T } | undefined;
   let failure: unknown;
@@ -343,7 +366,7 @@ export const OPS: Op[] = [
   }),
   op({
     name: 'auth.logout', summary: '删除本机保存的复旦账号登录状态（树洞、邮箱分别用 fdu hole logout、fdu mail forget）。', login: 'none', effect: 'auth', mcp: false, params: {},
-    async run(ctx) { return { removed: ctx.session.clear(), cacheCleared: ctx.cache?.clear() ?? 0 }; },
+    async run(ctx) { ctx.store.remove('library.json'); return { removed: ctx.session.clear(), cacheCleared: ctx.cache?.clear() ?? 0 }; },
   }),
   op({
     name: 'auth.doctor', summary: '检查运行环境：Node.js、浏览器、配置目录、能不能连上各个学校系统、各账号的登录状态，每项给出修复建议（结果里没有账号和 Cookie，可以直接发给别人帮忙看）。',
@@ -629,9 +652,26 @@ export const OPS: Op[] = [
       semester: z.string().optional().describe('学期 id 或名称关键词，默认当前学期'),
       page: int('第几页，默认 1', 1, 500),
       size: int('每页几条，默认 20', 1, 100),
+      syllabus: flag('同时读每个教学班的教学大纲（最多前 5 个，较慢）'),
     },
-    examples: ['fdu jw lessons --keyword 数据结构', 'fdu jw lessons --keyword 线性代数 --semester 2026-2027学年2学期'],
-    async run(ctx, a) { return readLessons(ctx.session.reader('jwfw'), { keyword: a.keyword, semester: a.semester, page: a.page, size: a.size }); },
+    examples: ['fdu jw lessons --keyword 数据结构', 'fdu jw lessons --keyword 线性代数 --semester 2026-2027学年2学期', 'fdu jw lessons --keyword 数据结构 --syllabus'],
+    async run(ctx, a) {
+      const reader = ctx.session.reader('jwfw');
+      const r = await readLessons(reader, { keyword: a.keyword, semester: a.semester, page: a.page, size: a.size });
+      if (!a.syllabus) return r;
+      const lessons = [];
+      for (const [i, l] of r.lessons.entries()) {
+        if (i >= 5 || !l.id) { lessons.push(l); continue; }
+        lessons.push({ ...l, syllabus: await readSyllabus(reader, l.id, 8000).catch((e) => ({ error: (e as Error).message })) });
+      }
+      return { ...r, lessons };
+    },
+  }),
+  op({
+    name: 'jw.syllabus', summary: '某个教学班的教学大纲（课程目标、内容安排、考核方式、教材等），转成纯文本。教学班 id 来自 fdu jw lessons。', login: 'uis', effect: 'read',
+    params: { lesson: z.string().regex(/^\d+$/).describe('教学班 id（fdu jw lessons 结果里的 id）'), maxChars: int('最多返回多少字，默认 30000', 1000, 200_000) },
+    examples: ['fdu jw syllabus --lesson 1037803'],
+    async run(ctx, a) { return readSyllabus(ctx.session.reader('jwfw'), a.lesson, a.maxChars); },
   }),
   op({
     name: 'jw.selected', summary: '选课结果：某学期已选上的课、学分和上课时间。', login: 'uis', effect: 'read',
@@ -855,19 +895,28 @@ export const OPS: Op[] = [
     login: 'none', effect: 'auth', mcp: false, params: {},
     async run(ctx) {
       let ok = false;
+      let token: string | undefined;
+      let expiresIn: number | undefined;
       let listening = false;
       ctx.log('已打开图书馆页面：请点右上角「登录」，登录后进入「我的借阅」，看到借阅信息后窗口会自动关闭。');
       await ctx.session.withPage(OPAC, async (page) => {
         if (!listening) {
           listening = true;
           page.on('response', (res) => {
-            if (!res.url().includes('fdulspgw.fudan.edu.cn/alsp/open-api/elib5/') || res.status() !== 200) return;
-            if (res.request().headers().access_token) ok = true;
+            if (!res.url().includes('fdulspgw.fudan.edu.cn/alsp/open-api/') || res.status() !== 200) return;
+            // 登录换令牌的那一步：顺便记下有效期
+            if (res.url().includes('/oauth2/getToken')) {
+              void res.json().then((j: { data?: { expires_in?: number } }) => { if (typeof j?.data?.expires_in === 'number') expiresIn = j.data.expires_in; }).catch(() => undefined);
+            }
+            const t = res.request().headers().access_token;
+            if (t && res.url().includes('/elib5/')) { token = t; ok = true; }
           });
         }
         return ok;
       }, { headless: false, timeoutMs: 300_000 });
-      if (!ok) throw new FduError('NEED_LOGIN', '没有完成图书馆登录。', '重新运行 `fdu library login`，登录后点开「我的借阅」。');
+      if (!ok || !token) throw new FduError('NEED_LOGIN', '没有完成图书馆登录。', '重新运行 `fdu library login`，登录后点开「我的借阅」。');
+      // 图书馆网页把令牌放在关掉页面就清空的地方，所以这里单独保存（权限 600）
+      ctx.store.writeJson(LIB_TOKEN, { token, savedAt: new Date(ctx.now()).toISOString(), ...(expiresIn ? { expiresAt: new Date(ctx.now() + expiresIn * 1000).toISOString() } : {}) });
       await ctx.session.save();
       return { loggedIn: true };
     },

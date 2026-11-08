@@ -281,10 +281,27 @@ fdu jw timetable --semester 2026-2027学年1学期
 | `--semester` | string |  | 学期 id 或名称关键词，默认当前学期 |
 | `--page` | integer |  | 第几页，默认 1 |
 | `--size` | integer |  | 每页几条，默认 20 |
+| `--syllabus` | boolean |  | 同时读每个教学班的教学大纲（最多前 5 个，较慢） |
 
 ```bash
 fdu jw lessons --keyword 数据结构
 fdu jw lessons --keyword 线性代数 --semester 2026-2027学年2学期
+fdu jw lessons --keyword 数据结构 --syllabus
+```
+
+### `fdu jw syllabus`
+
+某个教学班的教学大纲（课程目标、内容安排、考核方式、教材等），转成纯文本。教学班 id 来自 fdu jw lessons。
+
+登录：复旦账号 · 只读 · MCP：`jw_syllabus`
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `--lesson` | string | 是 | 教学班 id（fdu jw lessons 结果里的 id） |
+| `--max-chars` | integer |  | 最多返回多少字，默认 30000 |
+
+```bash
+fdu jw syllabus --lesson 1037803
 ```
 
 ### `fdu jw selected`
