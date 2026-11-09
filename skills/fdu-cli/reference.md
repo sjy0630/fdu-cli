@@ -70,6 +70,37 @@ fdu login --url https://my.fudan.edu.cn/simple_list/stqk
 
 登录：不用 · 只读 · MCP：`auth_status`
 
+### `fdu auth export`
+
+导出登录状态（复旦账号、WebVPN、图书馆、树洞；不含邮箱密码），带到没有屏幕的电脑（虚拟机、服务器）上用 fdu auth import 导入。导出的文本能代表你登录学校系统，只在自己的设备之间传。
+
+登录：不用 · 登录 / 退出 · **隐私数据** · 仅命令行
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `--out` | string |  | 写到这个文件里（权限 600），不在屏幕上显示 |
+
+```bash
+fdu auth export
+fdu auth export --out fdu-session.txt
+```
+
+### `fdu auth import`
+
+导入另一台电脑上 fdu auth export 导出的登录状态（会覆盖这台上已有的复旦账号、图书馆、树洞登录）。不加参数时提示你粘贴。
+
+登录：不用 · 登录 / 退出 · 仅命令行
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `--file` | string |  | 从这个文件读（fdu auth export --out 写的） |
+
+```bash
+fdu auth import
+fdu auth import --file fdu-session.txt
+cat fdu-session.txt | fdu auth import
+```
+
 ### `fdu auth logout`
 
 删除本机保存的复旦账号登录状态（树洞、邮箱分别用 fdu hole logout、fdu mail forget）。

@@ -1,4 +1,4 @@
-import { accessSync, constants as fsConstants, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
+import { accessSync, constants as fsConstants, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { z } from 'zod';
 import { ensureWebvpn, login, loginAt, platformStatus, sessionAuth, webvpnAlive } from './core/auth';
@@ -11,6 +11,7 @@ import { readCardBalance, readLibrary } from './services/campus-life';
 import { readElectricity } from './services/dorm';
 import { filterBus, readBus } from './services/bus';
 import { readCanteen } from './services/canteen';
+import { ago, cookieExpiry, packSession, TRANSFER_FILES, unpackSession } from './services/session-transfer';
 import { CanvasClient, isAssignmentDone, type CanvasCourse } from './services/elearning';
 import { readGpaRank, readGrades, readStudentId } from './services/grades';
 import { readExams, readLessons, readSemesters, readSyllabus, readTimetable } from './services/jw';
@@ -374,6 +375,24 @@ function outPath(ctx: Ctx, out: string | undefined, fallback: string): string {
   return target;
 }
 
+/** 登录记录：上次登录 / 导入是什么时候、之前几次各保持了多久 */
+function loginSummary(ctx: Ctx) {
+  const log = ctx.session.loginLog();
+  if (!log?.lastLoginAt) return undefined;
+  const lasted = log.lastedHours ?? [];
+  return {
+    lastLoginAt: log.lastLoginAt, lastLoginAgo: ago(log.lastLoginAt, ctx.now()), via: log.via,
+    ...(lasted.length ? { previousLoginsLastedHours: lasted, note: '之前几次登录从登录到发现过期大约过了这么多小时（学校没有公开有效期，这是实际观察）' } : {}),
+  };
+}
+
+/** 把标准输入读完（管道里的数据可能还没到，不能同步读） */
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
+  return Buffer.concat(chunks).toString('utf8');
+}
+
 export const OPS: Op[] = [
   // ======================= 账号 =======================
   op({
@@ -415,7 +434,50 @@ export const OPS: Op[] = [
         uis: { elearning: elearningStatus, jwfw, webvpn: ctx.session.hasState() ? await webvpnAlive(ctx.session) : false },
         treehole: !!ctx.store.readJson<HoleTokens>(HOLE),
         mail: !!ctx.store.readJson<MailConfig>(MAIL)?.user,
+        login: loginSummary(ctx),
         profileDir: ctx.store.dir,
+      };
+    },
+  }),
+  op({
+    name: 'auth.export', summary: '导出登录状态（复旦账号、WebVPN、图书馆、树洞；不含邮箱密码），带到没有屏幕的电脑（虚拟机、服务器）上用 fdu auth import 导入。导出的文本能代表你登录学校系统，只在自己的设备之间传。',
+    login: 'none', effect: 'auth', mcp: false, sensitive: true, cache: false,
+    params: { out: z.string().optional().describe('写到这个文件里（权限 600），不在屏幕上显示') },
+    examples: ['fdu auth export', 'fdu auth export --out fdu-session.txt'],
+    async run(ctx, a) {
+      const files = Object.fromEntries(TRANSFER_FILES.flatMap((name) => { const v = ctx.store.readJson(name); return v ? [[name, v]] : []; }));
+      if (!files['state.json']) throw new FduError('NEED_LOGIN', '这台电脑上还没有登录，没有可以导出的。', '先运行 `fdu login`。');
+      const token = packSession(files, ctx.now());
+      const expiry = cookieExpiry(files['state.json'], ctx.now());
+      const next = '在另一台电脑上运行 `fdu auth import`，粘贴后回车（或 `fdu auth import --file <文件>`）。';
+      if (a.out) {
+        const target = resolve(ctx.cwd, a.out);
+        if (existsSync(target)) throw new FduError('BAD_ARGS', `${target} 已经存在，不覆盖。`, '换一个文件名。');
+        writeFileSync(target, `${token}\n`, { mode: 0o600 });
+        return { file: target, includes: Object.keys(files), cookieExpiry: expiry, next, warning: '这个文件能代表你登录学校系统：传完就删掉，不要发给别人或提交到仓库。' };
+      }
+      return { token, includes: Object.keys(files), cookieExpiry: expiry, next, warning: 'token 能代表你登录学校系统：只在自己的设备之间传，不要发到群里、聊天记录或代码仓库。' };
+    },
+  }),
+  op({
+    name: 'auth.import', summary: '导入另一台电脑上 fdu auth export 导出的登录状态（会覆盖这台上已有的复旦账号、图书馆、树洞登录）。不加参数时提示你粘贴。',
+    login: 'none', effect: 'auth', mcp: false,
+    params: { file: z.string().optional().describe('从这个文件读（fdu auth export --out 写的）') },
+    examples: ['fdu auth import', 'fdu auth import --file fdu-session.txt', 'cat fdu-session.txt | fdu auth import'],
+    async run(ctx, a) {
+      let text: string;
+      if (a.file) text = readFileSync(resolve(ctx.cwd, a.file), 'utf8');
+      else if (!process.stdin.isTTY) text = await readStdin();
+      else text = await needPrompt(ctx)('粘贴 fdu auth export 导出的内容（不会显示），然后回车：', { hidden: true });
+      let bundle;
+      try { bundle = unpackSession(text); } catch (e) { throw new FduError('BAD_ARGS', (e as Error).message); }
+      for (const [name, value] of Object.entries(bundle.files)) ctx.store.writeJson(name, value);
+      ctx.session.noteLogin('import');
+      const [elearningStatus, jwfw] = await Promise.all([platformStatus(ctx.session, 'elearning'), platformStatus(ctx.session, 'jwfw')]).catch(() => ['unknown', 'unknown']);
+      return {
+        imported: Object.keys(bundle.files), exportedAt: bundle.exportedAt, exportedAgo: ago(bundle.exportedAt, ctx.now()),
+        uis: { elearning: elearningStatus, jwfw }, cookieExpiry: cookieExpiry(bundle.files['state.json'], ctx.now()),
+        ...(elearningStatus === 'ok' ? {} : { note: '导入了，但 eLearning 显示没有登录：导出的登录可能已经过期，在原来的电脑上重新 fdu login 再导出一次。' }),
       };
     },
   }),
@@ -1174,6 +1236,8 @@ export function runLoginTask(ctx: Ctx, attempt: () => Promise<boolean>): Promise
 }
 
 export function autoLogin(ctx: Ctx, e: unknown): Promise<boolean | 'pending'> {
+  // 记下登录过期的时间（用来估计登录能保持多久），关了自动弹窗也记
+  if (e instanceof NeedLoginError && ctx.session.hasState()) ctx.session.noteExpired();
   if (process.env.FDU_AUTO_LOGIN === '0') return Promise.resolve(false);
   const timeoutMs = (Number(process.env.FDU_LOGIN_WAIT) || 180) * 1000;
   let attempt: (() => Promise<boolean>) | undefined;

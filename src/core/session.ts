@@ -10,6 +10,9 @@ export interface RawResponse { status: number; url: string; contentType: string;
 export interface FetchInit { method?: string; headers?: Record<string, string>; body?: string; timeoutMs?: number; retries?: number }
 
 const STATE = 'state.json';
+const LOGIN_LOG = 'login.json';
+/** 登录记录：最近一次登录 / 导入的时间，以及之前几次登录各保持了多少小时 */
+export interface LoginLog { lastLoginAt?: string; via?: string; expiredAt?: string; lastedHours?: number[] }
 /**
  * 浏览器标识：后台请求、无界面浏览器、有界面浏览器都用同一个，并且和你的系统一致。
  * 有的系统（如 WebVPN）会把会话和浏览器标识绑在一起，标识对不上就要求重新登录。
@@ -82,6 +85,24 @@ export class Session {
   constructor(private readonly store: Store, private readonly opts: { browserPath?: string; headed?: boolean } = {}) {}
 
   hasState(): boolean { return !!this.store.readJson<StorageState>(STATE); }
+
+  /**
+   * 记下登录时间（login / import），以及发现登录过期的时间：
+   * 用来回答「登录能保持多久」——学校没有公开，只能看实际情况。只记时间，不记账号。
+   */
+  noteLogin(via: 'login' | 'import'): void {
+    const prev = this.store.readJson<LoginLog>(LOGIN_LOG) ?? {};
+    this.store.writeJson(LOGIN_LOG, { ...prev, lastLoginAt: new Date().toISOString(), via });
+  }
+
+  noteExpired(): void {
+    const log = this.store.readJson<LoginLog>(LOGIN_LOG);
+    if (!log?.lastLoginAt || (log.expiredAt && log.expiredAt >= log.lastLoginAt)) return;
+    const hours = Math.round(((Date.now() - Date.parse(log.lastLoginAt)) / 3_600_000) * 10) / 10;
+    this.store.writeJson(LOGIN_LOG, { ...log, expiredAt: new Date().toISOString(), lastedHours: [hours, ...(log.lastedHours ?? [])].slice(0, 10) });
+  }
+
+  loginLog(): LoginLog | null { return this.store.readJson<LoginLog>(LOGIN_LOG); }
 
   private async state(): Promise<StorageState | undefined> {
     if (this.ctx) return this.ctx.storageState();

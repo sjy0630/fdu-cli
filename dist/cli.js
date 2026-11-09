@@ -80,6 +80,7 @@ function toFduError(e) {
 
 // src/core/session.ts
 var STATE = "state.json";
+var LOGIN_LOG = "login.json";
 function userAgent(platform = process.platform) {
   const os = platform === "darwin" ? "Macintosh; Intel Mac OS X 10_15_7" : platform === "win32" ? "Windows NT 10.0; Win64; x64" : "X11; Linux x86_64";
   return `Mozilla/5.0 (${os}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36`;
@@ -135,6 +136,23 @@ var Session = class {
   bpage;
   hasState() {
     return !!this.store.readJson(STATE);
+  }
+  /**
+   * 记下登录时间（login / import），以及发现登录过期的时间：
+   * 用来回答「登录能保持多久」——学校没有公开，只能看实际情况。只记时间，不记账号。
+   */
+  noteLogin(via) {
+    const prev = this.store.readJson(LOGIN_LOG) ?? {};
+    this.store.writeJson(LOGIN_LOG, { ...prev, lastLoginAt: (/* @__PURE__ */ new Date()).toISOString(), via });
+  }
+  noteExpired() {
+    const log = this.store.readJson(LOGIN_LOG);
+    if (!log?.lastLoginAt || log.expiredAt && log.expiredAt >= log.lastLoginAt) return;
+    const hours = Math.round((Date.now() - Date.parse(log.lastLoginAt)) / 36e5 * 10) / 10;
+    this.store.writeJson(LOGIN_LOG, { ...log, expiredAt: (/* @__PURE__ */ new Date()).toISOString(), lastedHours: [hours, ...log.lastedHours ?? []].slice(0, 10) });
+  }
+  loginLog() {
+    return this.store.readJson(LOGIN_LOG);
   }
   async state() {
     if (this.ctx) return this.ctx.storageState();
@@ -547,7 +565,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z as z3 } from "zod";
 
 // src/ops.ts
-import { accessSync, constants as fsConstants, existsSync as existsSync2, mkdirSync as mkdirSync2, statSync as statSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { accessSync, constants as fsConstants, existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync as readFileSync2, statSync as statSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { basename, dirname as dirname2, extname, isAbsolute, join as join2, relative, resolve } from "node:path";
 import { z } from "zod";
 
@@ -690,6 +708,7 @@ async function login(session, opts = {}) {
       if (jwfw !== "ok") await new Promise((r) => setTimeout(r, 1500));
     }
   }
+  const jwfwWasExpired = jwfw === "need_login" && !!existing;
   if (jwfw === "need_login" && existing) {
     opts.onWaiting?.("\u7EDF\u4E00\u8EAB\u4EFD\u8BA4\u8BC1\u5DF2\u8FC7\u671F\uFF0C\u5DF2\u6253\u5F00\u6D4F\u89C8\u5668\uFF0C\u8BF7\u5728\u5B66\u6821\u7684\u767B\u5F55\u9875\u9762\u91CC\u91CD\u65B0\u767B\u5F55\uFF08\u6700\u957F\u7B49\u5F85 5 \u5206\u949F\uFF09\u2026\u2026");
     await session.withPage(JW_HOME, (page) => {
@@ -704,6 +723,7 @@ async function login(session, opts = {}) {
     webvpn = await webvpnAlive(session);
   }
   await session.save();
+  if (!existing || jwfwWasExpired) session.noteLogin("login");
   return { elearning: user, jwfw, webvpn };
 }
 async function loginAt(session, target, opts = {}) {
@@ -727,7 +747,10 @@ async function loginAt(session, target, opts = {}) {
     const visible = settled();
     await session.withPage(target.url, (page) => ok = visible(page), { headless: false, timeoutMs: opts.timeoutMs ?? 18e4 }).catch(() => void 0);
   }
-  if (ok) await session.save();
+  if (ok) {
+    await session.save();
+    session.noteLogin("login");
+  }
   return ok;
 }
 
@@ -1246,6 +1269,50 @@ async function readCanteen(reader) {
     }
   }
   return parseCanteen(html);
+}
+
+// src/services/session-transfer.ts
+import { gunzipSync, gzipSync } from "node:zlib";
+var TRANSFER_FILES = ["state.json", "library.json", "hole.json"];
+var PREFIX = "fdu-session-v1:";
+function packSession(files, now = Date.now()) {
+  const bundle = { v: 1, exportedAt: new Date(now).toISOString(), files };
+  return PREFIX + gzipSync(Buffer.from(JSON.stringify(bundle))).toString("base64url");
+}
+function unpackSession(text2) {
+  const s = text2.replace(/\s+/g, "");
+  const at = s.indexOf(PREFIX);
+  if (at < 0) throw new Error("\u8FD9\u4E0D\u662F fdu auth export \u5BFC\u51FA\u7684\u5185\u5BB9\uFF08\u5E94\u8BE5\u4EE5 fdu-session-v1: \u5F00\u5934\uFF09\u3002");
+  let bundle;
+  try {
+    bundle = JSON.parse(gunzipSync(Buffer.from(s.slice(at + PREFIX.length), "base64url")).toString("utf8"));
+  } catch {
+    throw new Error("\u5BFC\u51FA\u7684\u5185\u5BB9\u4E0D\u5B8C\u6574\uFF08\u53EF\u80FD\u590D\u5236\u65F6\u5C11\u4E86\u4E00\u622A\uFF09\uFF0C\u8BF7\u91CD\u65B0\u590D\u5236\u6574\u6BB5\u3002");
+  }
+  if (bundle?.v !== 1 || typeof bundle.files !== "object" || !bundle.files) throw new Error("\u5BFC\u51FA\u7684\u5185\u5BB9\u7248\u672C\u4E0D\u5BF9\uFF0C\u8BF7\u4E24\u8FB9\u90FD\u66F4\u65B0\u5230\u6700\u65B0\u7248 fdu\u3002");
+  for (const name of Object.keys(bundle.files)) if (!TRANSFER_FILES.includes(name)) delete bundle.files[name];
+  return bundle;
+}
+function cookieExpiry(state, now = Date.now()) {
+  const cookies = (state?.cookies ?? []).filter((c) => /fudan\.edu\.cn$/.test(c.domain.replace(/^\./, "")));
+  const bySite = /* @__PURE__ */ new Map();
+  for (const c of cookies) {
+    const site = c.domain.replace(/^\./, "");
+    bySite.set(site, [...bySite.get(site) ?? [], c]);
+  }
+  return [...bySite.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([site, list2]) => ({
+    site,
+    persistent: list2.filter((c) => c.expires > 0 && c.expires * 1e3 > now).map((c) => ({ name: c.name, expiresAt: new Date(c.expires * 1e3).toISOString(), daysLeft: Math.round((c.expires * 1e3 - now) / 864e5 * 10) / 10 })).sort((a, b) => a.daysLeft - b.daysLeft),
+    sessionOnly: list2.filter((c) => !(c.expires > 0)).length
+  }));
+}
+function ago(iso, now = Date.now()) {
+  if (!iso) return void 0;
+  const mins = Math.round((now - Date.parse(iso)) / 6e4);
+  if (!Number.isFinite(mins)) return void 0;
+  if (mins < 60) return `${Math.max(mins, 0)} \u5206\u949F\u524D`;
+  if (mins < 48 * 60) return `${Math.round(mins / 60)} \u5C0F\u65F6\u524D`;
+  return `${Math.round(mins / 1440)} \u5929\u524D`;
 }
 
 // src/services/elearning.ts
@@ -3777,6 +3844,22 @@ function outPath(ctx, out, fallback) {
   if (ctx.mcp && (rel.startsWith("..") || isAbsolute(rel))) throw new FduError("BAD_ARGS", `\u901A\u8FC7 MCP \u8C03\u7528\u65F6\u53EA\u80FD\u5199\u5230\u5F53\u524D\u76EE\u5F55\uFF08${ctx.cwd}\uFF09\u4E0B\u9762\u3002`, "\u53BB\u6389 out \u53C2\u6570\uFF0C\u6216\u8005\u5199\u6210\u5F53\u524D\u76EE\u5F55\u4E0B\u7684\u76F8\u5BF9\u8DEF\u5F84\u3002");
   return target;
 }
+function loginSummary(ctx) {
+  const log = ctx.session.loginLog();
+  if (!log?.lastLoginAt) return void 0;
+  const lasted = log.lastedHours ?? [];
+  return {
+    lastLoginAt: log.lastLoginAt,
+    lastLoginAgo: ago(log.lastLoginAt, ctx.now()),
+    via: log.via,
+    ...lasted.length ? { previousLoginsLastedHours: lasted, note: "\u4E4B\u524D\u51E0\u6B21\u767B\u5F55\u4ECE\u767B\u5F55\u5230\u53D1\u73B0\u8FC7\u671F\u5927\u7EA6\u8FC7\u4E86\u8FD9\u4E48\u591A\u5C0F\u65F6\uFF08\u5B66\u6821\u6CA1\u6709\u516C\u5F00\u6709\u6548\u671F\uFF0C\u8FD9\u662F\u5B9E\u9645\u89C2\u5BDF\uFF09" } : {}
+  };
+}
+async function readStdin() {
+  const chunks = [];
+  for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
+  return Buffer.concat(chunks).toString("utf8");
+}
 var OPS = [
   // ======================= 账号 =======================
   op({
@@ -3828,7 +3911,69 @@ var OPS = [
         uis: { elearning: elearningStatus, jwfw, webvpn: ctx.session.hasState() ? await webvpnAlive(ctx.session) : false },
         treehole: !!ctx.store.readJson(HOLE),
         mail: !!ctx.store.readJson(MAIL)?.user,
+        login: loginSummary(ctx),
         profileDir: ctx.store.dir
+      };
+    }
+  }),
+  op({
+    name: "auth.export",
+    summary: "\u5BFC\u51FA\u767B\u5F55\u72B6\u6001\uFF08\u590D\u65E6\u8D26\u53F7\u3001WebVPN\u3001\u56FE\u4E66\u9986\u3001\u6811\u6D1E\uFF1B\u4E0D\u542B\u90AE\u7BB1\u5BC6\u7801\uFF09\uFF0C\u5E26\u5230\u6CA1\u6709\u5C4F\u5E55\u7684\u7535\u8111\uFF08\u865A\u62DF\u673A\u3001\u670D\u52A1\u5668\uFF09\u4E0A\u7528 fdu auth import \u5BFC\u5165\u3002\u5BFC\u51FA\u7684\u6587\u672C\u80FD\u4EE3\u8868\u4F60\u767B\u5F55\u5B66\u6821\u7CFB\u7EDF\uFF0C\u53EA\u5728\u81EA\u5DF1\u7684\u8BBE\u5907\u4E4B\u95F4\u4F20\u3002",
+    login: "none",
+    effect: "auth",
+    mcp: false,
+    sensitive: true,
+    cache: false,
+    params: { out: z.string().optional().describe("\u5199\u5230\u8FD9\u4E2A\u6587\u4EF6\u91CC\uFF08\u6743\u9650 600\uFF09\uFF0C\u4E0D\u5728\u5C4F\u5E55\u4E0A\u663E\u793A") },
+    examples: ["fdu auth export", "fdu auth export --out fdu-session.txt"],
+    async run(ctx, a) {
+      const files = Object.fromEntries(TRANSFER_FILES.flatMap((name) => {
+        const v = ctx.store.readJson(name);
+        return v ? [[name, v]] : [];
+      }));
+      if (!files["state.json"]) throw new FduError("NEED_LOGIN", "\u8FD9\u53F0\u7535\u8111\u4E0A\u8FD8\u6CA1\u6709\u767B\u5F55\uFF0C\u6CA1\u6709\u53EF\u4EE5\u5BFC\u51FA\u7684\u3002", "\u5148\u8FD0\u884C `fdu login`\u3002");
+      const token = packSession(files, ctx.now());
+      const expiry = cookieExpiry(files["state.json"], ctx.now());
+      const next = "\u5728\u53E6\u4E00\u53F0\u7535\u8111\u4E0A\u8FD0\u884C `fdu auth import`\uFF0C\u7C98\u8D34\u540E\u56DE\u8F66\uFF08\u6216 `fdu auth import --file <\u6587\u4EF6>`\uFF09\u3002";
+      if (a.out) {
+        const target = resolve(ctx.cwd, a.out);
+        if (existsSync2(target)) throw new FduError("BAD_ARGS", `${target} \u5DF2\u7ECF\u5B58\u5728\uFF0C\u4E0D\u8986\u76D6\u3002`, "\u6362\u4E00\u4E2A\u6587\u4EF6\u540D\u3002");
+        writeFileSync2(target, `${token}
+`, { mode: 384 });
+        return { file: target, includes: Object.keys(files), cookieExpiry: expiry, next, warning: "\u8FD9\u4E2A\u6587\u4EF6\u80FD\u4EE3\u8868\u4F60\u767B\u5F55\u5B66\u6821\u7CFB\u7EDF\uFF1A\u4F20\u5B8C\u5C31\u5220\u6389\uFF0C\u4E0D\u8981\u53D1\u7ED9\u522B\u4EBA\u6216\u63D0\u4EA4\u5230\u4ED3\u5E93\u3002" };
+      }
+      return { token, includes: Object.keys(files), cookieExpiry: expiry, next, warning: "token \u80FD\u4EE3\u8868\u4F60\u767B\u5F55\u5B66\u6821\u7CFB\u7EDF\uFF1A\u53EA\u5728\u81EA\u5DF1\u7684\u8BBE\u5907\u4E4B\u95F4\u4F20\uFF0C\u4E0D\u8981\u53D1\u5230\u7FA4\u91CC\u3001\u804A\u5929\u8BB0\u5F55\u6216\u4EE3\u7801\u4ED3\u5E93\u3002" };
+    }
+  }),
+  op({
+    name: "auth.import",
+    summary: "\u5BFC\u5165\u53E6\u4E00\u53F0\u7535\u8111\u4E0A fdu auth export \u5BFC\u51FA\u7684\u767B\u5F55\u72B6\u6001\uFF08\u4F1A\u8986\u76D6\u8FD9\u53F0\u4E0A\u5DF2\u6709\u7684\u590D\u65E6\u8D26\u53F7\u3001\u56FE\u4E66\u9986\u3001\u6811\u6D1E\u767B\u5F55\uFF09\u3002\u4E0D\u52A0\u53C2\u6570\u65F6\u63D0\u793A\u4F60\u7C98\u8D34\u3002",
+    login: "none",
+    effect: "auth",
+    mcp: false,
+    params: { file: z.string().optional().describe("\u4ECE\u8FD9\u4E2A\u6587\u4EF6\u8BFB\uFF08fdu auth export --out \u5199\u7684\uFF09") },
+    examples: ["fdu auth import", "fdu auth import --file fdu-session.txt", "cat fdu-session.txt | fdu auth import"],
+    async run(ctx, a) {
+      let text2;
+      if (a.file) text2 = readFileSync2(resolve(ctx.cwd, a.file), "utf8");
+      else if (!process.stdin.isTTY) text2 = await readStdin();
+      else text2 = await needPrompt(ctx)("\u7C98\u8D34 fdu auth export \u5BFC\u51FA\u7684\u5185\u5BB9\uFF08\u4E0D\u4F1A\u663E\u793A\uFF09\uFF0C\u7136\u540E\u56DE\u8F66\uFF1A", { hidden: true });
+      let bundle;
+      try {
+        bundle = unpackSession(text2);
+      } catch (e) {
+        throw new FduError("BAD_ARGS", e.message);
+      }
+      for (const [name, value] of Object.entries(bundle.files)) ctx.store.writeJson(name, value);
+      ctx.session.noteLogin("import");
+      const [elearningStatus, jwfw] = await Promise.all([platformStatus(ctx.session, "elearning"), platformStatus(ctx.session, "jwfw")]).catch(() => ["unknown", "unknown"]);
+      return {
+        imported: Object.keys(bundle.files),
+        exportedAt: bundle.exportedAt,
+        exportedAgo: ago(bundle.exportedAt, ctx.now()),
+        uis: { elearning: elearningStatus, jwfw },
+        cookieExpiry: cookieExpiry(bundle.files["state.json"], ctx.now()),
+        ...elearningStatus === "ok" ? {} : { note: "\u5BFC\u5165\u4E86\uFF0C\u4F46 eLearning \u663E\u793A\u6CA1\u6709\u767B\u5F55\uFF1A\u5BFC\u51FA\u7684\u767B\u5F55\u53EF\u80FD\u5DF2\u7ECF\u8FC7\u671F\uFF0C\u5728\u539F\u6765\u7684\u7535\u8111\u4E0A\u91CD\u65B0 fdu login \u518D\u5BFC\u51FA\u4E00\u6B21\u3002" }
       };
     }
   }),
@@ -4854,6 +4999,7 @@ function runLoginTask(ctx, attempt) {
   })]).finally(() => clearTimeout(timer));
 }
 function autoLogin(ctx, e) {
+  if (e instanceof NeedLoginError && ctx.session.hasState()) ctx.session.noteExpired();
   if (process.env.FDU_AUTO_LOGIN === "0") return Promise.resolve(false);
   const timeoutMs = (Number(process.env.FDU_LOGIN_WAIT) || 180) * 1e3;
   let attempt;

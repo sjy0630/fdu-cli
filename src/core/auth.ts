@@ -161,6 +161,7 @@ export async function login(session: Session, opts: { webvpn?: boolean; timeoutM
   }
   // eLearning 自己的会话比统一身份认证活得久：它还在、但教务系统的单点登录走不通，
   // 说明统一身份认证已经过期，打开浏览器重新登录（登录后会直接回到教务系统）
+  const jwfwWasExpired = jwfw === 'need_login' && !!existing;
   if (jwfw === 'need_login' && existing) {
     opts.onWaiting?.('统一身份认证已过期，已打开浏览器，请在学校的登录页面里重新登录（最长等待 5 分钟）……');
     await session.withPage(JW_HOME, (page) => {
@@ -175,6 +176,8 @@ export async function login(session: Session, opts: { webvpn?: boolean; timeoutM
     webvpn = await webvpnAlive(session);
   }
   await session.save();
+  // 这次真的在浏览器里登录过（不是直接沿用已有的登录）才记
+  if (!existing || jwfwWasExpired) session.noteLogin('login');
   return { elearning: user, jwfw, webvpn };
 }
 
@@ -195,6 +198,6 @@ export async function loginAt(session: Session, target: LoginPage, opts: { timeo
     const visible = settled();
     await session.withPage(target.url, (page) => (ok = visible(page)), { headless: false, timeoutMs: opts.timeoutMs ?? 180_000 }).catch(() => undefined);
   }
-  if (ok) await session.save();
+  if (ok) { await session.save(); session.noteLogin('login'); }
   return ok;
 }
