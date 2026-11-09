@@ -1,6 +1,6 @@
 {
   "name": "fdu-cli",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "复旦校园服务命令行和 MCP 服务，给 Claude Code、Codex 等 AI 助理用：课表、作业 DDL、考试、成绩、教学大纲、空教室、课程回放文字稿、图书馆借阅、校园卡、体育场馆、通知、树洞、邮箱。全部只读。",
   "type": "module",
   "bin": {
