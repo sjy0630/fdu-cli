@@ -5,6 +5,7 @@ export type ErrorCode =
   | 'NEED_LOGIN' // 复旦账号没登录或登录过期：运行 fdu login
   | 'NEED_HOLE_LOGIN' // 树洞没登录：运行 fdu hole login
   | 'NEED_MAIL_SETUP' // 邮箱没配置：运行 fdu mail setup
+  | 'NEED_TERMINAL' // 要在终端里输入密码（树洞、邮箱），AI 和脚本不能代替
   | 'NO_BROWSER' // 找不到 Chrome / Edge
   | 'BAD_ARGS'
   | 'NOT_FOUND'

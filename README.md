@@ -98,9 +98,9 @@ args = ["mcp"]
 | 树洞 / 蛋壳课评 | `fdu hole login --email 学号@m.fudan.edu.cn` | 密码只用来换令牌，不保存 |
 | 学生邮箱 | `fdu mail setup --user 学号@m.fudan.edu.cn` | 网页邮箱里生成的客户端专用密码（明文保存在本机） |
 
-**登录过期会自动弹窗**：任何命令（包括 AI 通过 MCP 调用时）遇到需要登录，都会直接在你电脑上打开对应的页面。统一身份认证、某些页面要求的二次验证（如微信扫码）、教室系统、图书馆、WebVPN 都一样。你按提示完成后窗口自动关闭，这次查询接着完成，不用切到终端。不在电脑前时，等 3 分钟后照常返回 `NEED_LOGIN`。
+**登录过期会自动弹窗**：任何命令（包括 AI 通过 MCP 调用时）遇到需要登录，都会直接在你电脑上打开对应的页面。统一身份认证、某些页面要求的二次验证（如微信扫码）、教室系统、图书馆、WebVPN 都一样。你按提示完成后窗口自动关闭，这次查询接着完成，不用切到终端。命令行里最多等 3 分钟；**通过 MCP 调用时最多等 50 秒**（客户端的工具调用一般一分钟左右就超时），等不到时先返回「登录窗口已打开、等你完成」，窗口留着，完成后让 AI 再查一次即可。
 
-- 关掉自动弹窗：设置环境变量 `FDU_AUTO_LOGIN=0`；改等待时间：`FDU_LOGIN_WAIT=秒数`
+- 关掉自动弹窗：设置环境变量 `FDU_AUTO_LOGIN=0`；改等待时间：`FDU_LOGIN_WAIT=秒数`（命令行）、`FDU_MCP_LOGIN_WAIT=秒数`（MCP）
 - 手动完成某个页面的登录或二次验证：`fdu login --url <页面地址>`（`NEED_LOGIN` 的提示里会给出地址）
 - `fdu status` 看各账号的状态。登录状态保存在本机，每次查询都会把学校续期后的状态写回去；能保持多久由学校决定
 
@@ -126,10 +126,12 @@ fdu describe jw.lessons     # 一个命令的说明（JSON，给 AI 看）
 | 0 | 成功 |
 | 1 | 学校系统出错、网络问题、页面改版（`UPSTREAM`、`FORMAT_CHANGED`） |
 | 2 | 参数错误、命令不存在（`BAD_ARGS`、`NOT_FOUND`） |
-| 3 | 需要登录或配置（`NEED_LOGIN`、`NEED_HOLE_LOGIN`、`NEED_MAIL_SETUP`） |
+| 3 | 需要登录或配置（`NEED_LOGIN`、`NEED_HOLE_LOGIN`、`NEED_MAIL_SETUP`），或要用户自己在终端输入密码（`NEED_TERMINAL`） |
 
 - 时间都是 ISO 格式（UTC，末尾 Z），常用字段另附 `*Shanghai`（北京时间）。
-- 只读查询的结果会缓存在本机：加 `--cached` 不联网，返回上次的结果（带 `cachedAt`）；联网失败时，错误里附上上次的结果 `cached`。
+- 只读查询的结果会缓存在本机：加 `--cached` 不联网，返回上次的结果（带 `cachedAt`）；联网失败时，错误里附上上次的结果 `cached`。缓存有有效期：实时数据（人数、空闲、余额、电量）30 分钟，成绩、消费、邮件等隐私数据 24 小时，其他 7 天；最多留 200 份。
+- 网络不稳时，查询请求遇到超时、连接被重置或学校系统临时出错会自动重试 1–2 次。
+- `FORMAT_CHANGED` 表示学校返回的内容和预期不同（多半是页面改版），不是网络问题。
 - 教学周按学校校历计算（一周从周日开始，第 0 周是报到注册周）；内置 2026—2027 学年校历，之后的学期按教务系统的开学日期推算。
 - 通用参数：`--compact` 单行输出，`--profile 名称` 另一套登录状态，`--browser 路径` 指定浏览器。
 
@@ -139,7 +141,9 @@ fdu describe jw.lessons     # 一个命令的说明（JSON，给 AI 看）
 
 **在校外能用吗？** 能。eLearning、教务、校园卡等直接访问；树洞、教室、iCourse 等只对校园网开放的系统会自动经过 WebVPN。
 
-**提示找不到浏览器？** 安装 Chrome 或 Edge；或者把 `FDU_BROWSER` 设成任意 Chromium 内核浏览器的路径；或者运行 `npx playwright install chromium`。
+**提示找不到浏览器？** 安装 Chrome 或 Edge；或者把 `FDU_BROWSER` 设成任意 Chromium 内核浏览器的路径；或者运行 `npx playwright install chromium`。错误信息里会列出试过的每种浏览器和失败原因。
+
+**在服务器、容器、虚拟机里用？** 以 root 运行时会自动给 Chromium 加 `--no-sandbox`，Linux 上会加 `--disable-dev-shm-usage`；还需要别的启动参数时用 `FDU_CHROMIUM_ARGS` 补（空格分开）。`fdu doctor` 的网络检查每项最多等 30 秒并重试一次，结果里有每项耗时。登录要在有图形界面的电脑上完成一次，再把 `~/.config/fdu-cli/default/state.json` 带过去（注意它能代表你登录）。
 
 **能帮我续借、预约场馆、选课吗？** 不能，这个工具对学校系统只读。它会告诉你哪本书快到期、哪个场地有空，操作请到学校网站上自己完成。
 

@@ -12,6 +12,8 @@ export interface DoctorDeps {
   configDirState(): { writable: boolean; mode?: number };
   /** 保存登录状态、密码的文件和它们的权限位（不存在的不列） */
   secretFiles?(): { name: string; mode: number }[];
+  /** 读的时候发现损坏的文件 */
+  corrupted?(): string[];
   /** 启动一次无界面浏览器，返回浏览器名称和版本 */
   browser(): Promise<string>;
   /** 访问一个地址，返回最终地址和状态码；连不上时抛错 */
@@ -42,6 +44,7 @@ export async function runDoctor(d: DoctorDeps): Promise<{ healthy: boolean; chec
   if (!dir.writable) checks.push({ name: '配置目录', status: 'fail', detail: `${d.configDir} 不能写入`, fix: '检查这个目录的权限，或用环境变量 FDU_HOME 换一个位置' });
   else if (d.platform !== 'win32' && dir.mode !== undefined && (dir.mode & 0o077)) checks.push({ name: '配置目录', status: 'warn', detail: `${d.configDir} 其他用户也能访问（权限 ${(dir.mode & 0o777).toString(8)}）`, fix: `运行 chmod 700 "${d.configDir}"` });
   else checks.push({ name: '配置目录', status: 'ok', detail: d.configDir });
+  for (const name of d.corrupted?.() ?? []) checks.push({ name: `文件损坏：${name}`, status: 'warn', detail: `${name} 不是有效的 JSON，已改名为 ${name}.corrupt`, fix: name === 'state.json' ? '运行 fdu login 重新登录' : name === 'mail.json' ? '运行 fdu mail setup 重新配置' : name === 'hole.json' ? '运行 fdu hole login 重新登录' : '重新登录对应的系统' });
   if (d.platform !== 'win32') {
     const open = (d.secretFiles?.() ?? []).filter((f) => f.mode & 0o077);
     if (open.length) checks.push({

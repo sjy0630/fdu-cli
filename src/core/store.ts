@@ -24,10 +24,20 @@ export class Store {
 
   path(name: string): string { return join(this.dir, name); }
 
+  /** 这次运行里发现损坏、已改名留存的文件（fdu doctor 会报告） */
+  readonly corrupted: string[] = [];
+
   readJson<T>(name: string): T | null {
     const file = this.path(name);
     if (!existsSync(file)) return null;
-    try { return JSON.parse(readFileSync(file, 'utf8')) as T; } catch { return null; }
+    try { return JSON.parse(readFileSync(file, 'utf8')) as T; } catch {
+      // 文件坏了：改名留着（方便排查），不要和「从来没有」混在一起悄悄忽略
+      const kept = `${file}.corrupt`;
+      try { renameSync(file, kept); } catch { /* 改名失败就留在原处 */ }
+      this.corrupted.push(name);
+      if (!name.startsWith('cache/')) process.stderr.write(`fdu：${name} 已损坏，已改名为 ${name}.corrupt 留存；需要的话重新登录或配置。\n`);
+      return null;
+    }
   }
 
   /** 先写临时文件再改名，写到一半断电也不会留下坏文件 */

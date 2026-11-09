@@ -140,3 +140,42 @@ describe('doctor 检查登录文件权限', async () => {
     expect(c!.detail).not.toContain('state.json');
   });
 });
+
+describe('损坏的文件', () => {
+  it('改名为 .corrupt 留存并记下来，不和「从来没有」混在一起', async () => {
+    const { writeFileSync, existsSync } = await import('node:fs');
+    process.env.FDU_HOME = mkdtempSync(join(tmpdir(), 'fdu-'));
+    const store = new Store();
+    store.writeJson('state.json', { cookies: [] });
+    writeFileSync(store.path('state.json'), '{坏了');
+    expect(store.readJson('state.json')).toBeNull();
+    expect(store.corrupted).toEqual(['state.json']);
+    expect(existsSync(store.path('state.json.corrupt'))).toBe(true);
+    expect(store.readJson('mail.json')).toBeNull();
+    expect(store.corrupted).toEqual(['state.json']);
+  });
+});
+
+describe('MCP 服务端到端', () => {
+  it('通过 stdio 拉起 fdu mcp，工具数和操作表一致，auth_login 里没有 force', async () => {
+    const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+    const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
+    const { OPS } = await import('../src/ops');
+    const transport = new StdioClientTransport({
+      command: process.execPath, args: ['--import', 'tsx', 'src/cli.ts', 'mcp'],
+      env: { ...process.env, FDU_HOME: mkdtempSync(join(tmpdir(), 'fdu-')), FDU_AUTO_LOGIN: '0' } as Record<string, string>,
+      stderr: 'ignore',
+    });
+    const client = new Client({ name: 'smoke', version: '0' });
+    await client.connect(transport);
+    try {
+      const { tools } = await client.listTools();
+      expect(tools.length).toBe(OPS.filter((o) => o.mcp !== false).length);
+      const login = tools.find((t) => t.name === 'auth_login')!;
+      expect(Object.keys((login.inputSchema as { properties?: object }).properties ?? {})).not.toContain('force');
+      // 不用联网的命令能跑通
+      const r = await client.callTool({ name: 'jw_week', arguments: { date: '2026-11-10' } });
+      expect(r.isError).toBeFalsy();
+    } finally { await client.close(); }
+  }, 30_000);
+});

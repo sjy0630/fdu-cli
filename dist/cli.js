@@ -82,7 +82,7 @@ function toFduError(e) {
 var STATE = "state.json";
 function userAgent(platform = process.platform) {
   const os = platform === "darwin" ? "Macintosh; Intel Mac OS X 10_15_7" : platform === "win32" ? "Windows NT 10.0; Win64; x64" : "X11; Linux x86_64";
-  return `Mozilla/5.0 (${os}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36`;
+  return `Mozilla/5.0 (${os}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36`;
 }
 var UA = userAgent();
 var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -439,12 +439,22 @@ var Store = class {
   path(name) {
     return join(this.dir, name);
   }
+  /** 这次运行里发现损坏、已改名留存的文件（fdu doctor 会报告） */
+  corrupted = [];
   readJson(name) {
     const file = this.path(name);
     if (!existsSync(file)) return null;
     try {
       return JSON.parse(readFileSync(file, "utf8"));
     } catch {
+      const kept = `${file}.corrupt`;
+      try {
+        renameSync(file, kept);
+      } catch {
+      }
+      this.corrupted.push(name);
+      if (!name.startsWith("cache/")) process.stderr.write(`fdu\uFF1A${name} \u5DF2\u635F\u574F\uFF0C\u5DF2\u6539\u540D\u4E3A ${name}.corrupt \u7559\u5B58\uFF1B\u9700\u8981\u7684\u8BDD\u91CD\u65B0\u767B\u5F55\u6216\u914D\u7F6E\u3002
+`);
       return null;
     }
   }
@@ -538,7 +548,7 @@ import { z as z3 } from "zod";
 
 // src/ops.ts
 import { accessSync, constants as fsConstants, existsSync as existsSync2, mkdirSync as mkdirSync2, statSync as statSync2, writeFileSync as writeFileSync2 } from "node:fs";
-import { basename, dirname as dirname2, extname, join as join2, resolve } from "node:path";
+import { basename, dirname as dirname2, extname, isAbsolute, join as join2, relative, resolve } from "node:path";
 import { z } from "zod";
 
 // src/core/auth.ts
@@ -2790,6 +2800,7 @@ async function runDoctor(d) {
   if (!dir.writable) checks.push({ name: "\u914D\u7F6E\u76EE\u5F55", status: "fail", detail: `${d.configDir} \u4E0D\u80FD\u5199\u5165`, fix: "\u68C0\u67E5\u8FD9\u4E2A\u76EE\u5F55\u7684\u6743\u9650\uFF0C\u6216\u7528\u73AF\u5883\u53D8\u91CF FDU_HOME \u6362\u4E00\u4E2A\u4F4D\u7F6E" });
   else if (d.platform !== "win32" && dir.mode !== void 0 && dir.mode & 63) checks.push({ name: "\u914D\u7F6E\u76EE\u5F55", status: "warn", detail: `${d.configDir} \u5176\u4ED6\u7528\u6237\u4E5F\u80FD\u8BBF\u95EE\uFF08\u6743\u9650 ${(dir.mode & 511).toString(8)}\uFF09`, fix: `\u8FD0\u884C chmod 700 "${d.configDir}"` });
   else checks.push({ name: "\u914D\u7F6E\u76EE\u5F55", status: "ok", detail: d.configDir });
+  for (const name of d.corrupted?.() ?? []) checks.push({ name: `\u6587\u4EF6\u635F\u574F\uFF1A${name}`, status: "warn", detail: `${name} \u4E0D\u662F\u6709\u6548\u7684 JSON\uFF0C\u5DF2\u6539\u540D\u4E3A ${name}.corrupt`, fix: name === "state.json" ? "\u8FD0\u884C fdu login \u91CD\u65B0\u767B\u5F55" : name === "mail.json" ? "\u8FD0\u884C fdu mail setup \u91CD\u65B0\u914D\u7F6E" : name === "hole.json" ? "\u8FD0\u884C fdu hole login \u91CD\u65B0\u767B\u5F55" : "\u91CD\u65B0\u767B\u5F55\u5BF9\u5E94\u7684\u7CFB\u7EDF" });
   if (d.platform !== "win32") {
     const open = (d.secretFiles?.() ?? []).filter((f) => f.mode & 63);
     if (open.length) checks.push({
@@ -3509,7 +3520,11 @@ var flag = (description) => {
   FLAGS.add(schema);
   return schema;
 };
-var int2 = (description, min = 1, max = 1e3) => z.coerce.number().int().min(min).max(max).optional().describe(description);
+var int2 = (description, min = 1, max = 1e3) => z.preprocess(
+  // 命令行里 --days 后面忘了写数字时会变成 true：不能悄悄当成 1
+  (v) => typeof v === "boolean" ? Number.NaN : v === "" ? void 0 : v,
+  z.coerce.number({ error: "\u8981\u5199\u4E00\u4E2A\u6570\u5B57" }).int("\u8981\u5199\u6574\u6570").min(min).max(max)
+).optional().describe(description);
 var DAY3 = 864e5;
 var shanghaiDate = (iso) => iso ? new Date(iso).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false }) : void 0;
 var elearning = (ctx) => new CanvasClient(sessionAuth(ctx.session));
@@ -3744,10 +3759,24 @@ function overviewDeps(ctx) {
   };
 }
 var needPrompt = (ctx) => {
-  if (!ctx.prompt) throw new FduError("BAD_ARGS", "\u8FD9\u4E2A\u64CD\u4F5C\u9700\u8981\u5728\u7EC8\u7AEF\u91CC\u8F93\u5165\u5BC6\u7801\uFF0C\u8BF7\u76F4\u63A5\u5728\u7EC8\u7AEF\u8FD0\u884C\u3002");
+  if (!ctx.prompt) throw new FduError("NEED_TERMINAL", "\u8FD9\u4E2A\u64CD\u4F5C\u9700\u8981\u5728\u7EC8\u7AEF\u91CC\u8F93\u5165\u5BC6\u7801\uFF0CAI \u548C\u811A\u672C\u4E0D\u80FD\u4EE3\u66FF\u3002", "\u8BF7\u7528\u6237\u81EA\u5DF1\u6253\u5F00\u7EC8\u7AEF\u8FD0\u884C\u8FD9\u6761\u547D\u4EE4\u3002");
   return ctx.prompt;
 };
 var REALTIME_TTL = 30 * 6e4;
+var isFudanHost = (url) => {
+  try {
+    const h = new URL(url).hostname;
+    return h === "fudan.edu.cn" || h.endsWith(".fudan.edu.cn");
+  } catch {
+    return false;
+  }
+};
+function outPath(ctx, out, fallback) {
+  const target = resolve(ctx.cwd, out ?? fallback);
+  const rel = relative(resolve(ctx.cwd), target);
+  if (ctx.mcp && (rel.startsWith("..") || isAbsolute(rel))) throw new FduError("BAD_ARGS", `\u901A\u8FC7 MCP \u8C03\u7528\u65F6\u53EA\u80FD\u5199\u5230\u5F53\u524D\u76EE\u5F55\uFF08${ctx.cwd}\uFF09\u4E0B\u9762\u3002`, "\u53BB\u6389 out \u53C2\u6570\uFF0C\u6216\u8005\u5199\u6210\u5F53\u524D\u76EE\u5F55\u4E0B\u7684\u76F8\u5BF9\u8DEF\u5F84\u3002");
+  return target;
+}
 var OPS = [
   // ======================= 账号 =======================
   op({
@@ -3836,6 +3865,10 @@ var OPS = [
           } catch {
             return { writable: false };
           }
+        },
+        corrupted: () => {
+          for (const f of ["state.json", "mail.json", "hole.json", "library.json"]) ctx.store.readJson(f);
+          return [...new Set(ctx.store.corrupted)];
         },
         secretFiles: () => ["state.json", "mail.json", "hole.json", "library.json"].flatMap((name) => {
           try {
@@ -3999,7 +4032,7 @@ var OPS = [
         }
       });
       if (!events.length && firstError) throw firstError;
-      const target = resolve(ctx.cwd, a.out ?? "fudan.ics");
+      const target = outPath(ctx, a.out, "fudan.ics");
       mkdirSync2(dirname2(target), { recursive: true });
       const path = a.overwrite ? target : safeTarget(dirname2(target), basename(target));
       writeFileSync2(path, buildIcs(events, { name: semester ? `\u590D\u65E6\u8BFE\u8868 ${semester}` : "\u590D\u65E6\u8BFE\u8868", now: ctx.now() }), { mode: 420 });
@@ -4079,7 +4112,7 @@ var OPS = [
     params: { file: z.string().describe("\u6587\u4EF6 id\uFF08\u6765\u81EA elearning files\uFF09"), out: z.string().optional().describe("\u4FDD\u5B58\u5230\u54EA\u4E2A\u6587\u4EF6\u5939\uFF0C\u9ED8\u8BA4\u5F53\u524D\u76EE\u5F55") },
     async run(ctx, a) {
       const f = await elearning(ctx).downloadFile(a.file);
-      const dir = resolve(ctx.cwd, a.out ?? ".");
+      const dir = outPath(ctx, a.out, ".");
       mkdirSync2(dir, { recursive: true });
       const target = safeTarget(dir, f.name);
       writeFileSync2(target, f.data, { flag: "wx" });
@@ -4206,14 +4239,7 @@ var OPS = [
       const reader = ctx.session.reader("jwfw");
       const r = await readLessons(reader, { keyword: a.keyword, semester: a.semester, page: a.page, size: a.size });
       if (!a.syllabus) return r;
-      const lessons = [];
-      for (const [i, l] of r.lessons.entries()) {
-        if (i >= 5 || !l.id) {
-          lessons.push(l);
-          continue;
-        }
-        lessons.push({ ...l, syllabus: await readSyllabus(reader, l.id, 8e3).catch((e) => ({ error: e.message })) });
-      }
+      const lessons = await pool([...r.lessons.entries()], 3, async ([i, l]) => i >= 5 || !l.id ? l : { ...l, syllabus: await readSyllabus(reader, l.id, 8e3).catch((e) => ({ error: e.message })) });
       return { ...r, lessons };
     }
   }),
@@ -4670,7 +4696,9 @@ var OPS = [
     params: { url: z.string().url().describe("\u901A\u77E5\u94FE\u63A5\uFF08\u6765\u81EA notices list\uFF09") },
     async run(ctx, a) {
       if (!/^https?:\/\//.test(a.url)) throw new FduError("BAD_ARGS", "\u53EA\u652F\u6301 http / https \u94FE\u63A5\u3002");
+      if (!isFudanHost(a.url)) throw new FduError("BAD_ARGS", "\u53EA\u80FD\u8BFB\u590D\u65E6\u7F51\u7AD9\uFF08*.fudan.edu.cn\uFF09\u4E0A\u7684\u901A\u77E5\u3002", "\u94FE\u63A5\u8BF7\u7528 fdu notices list \u8FD4\u56DE\u7684\u3002");
       const page = await ctx.session.raw(a.url);
+      if (!isFudanHost(page.url)) throw new FduError("BAD_ARGS", "\u8FD9\u4E2A\u94FE\u63A5\u8DF3\u8F6C\u5230\u4E86\u590D\u65E6\u4EE5\u5916\u7684\u7F51\u7AD9\uFF0C\u6CA1\u6709\u8BFB\u53D6\u3002");
       if (page.status >= 400) throw new FduError("UPSTREAM", `\u7F51\u7AD9\u8FD4\u56DE ${page.status}`);
       const d = parseNoticeDetail(page.text, page.url);
       return { url: page.url, ...d, text: d.text.slice(0, 2e4) };
@@ -4962,7 +4990,7 @@ function buildServer(session, store) {
       annotations: { readOnlyHint: op2.effect === "read", destructiveHint: false, openWorldHint: true }
     }, async (args) => {
       const ctx = { store, session, log: (m) => process.stderr.write(`${m}
-`), cwd: process.cwd(), now: () => Date.now(), cache: new Cache(store), relogin: (e) => autoLogin(ctx, e), waitMs: MCP_LOGIN_WAIT_MS };
+`), cwd: process.cwd(), now: () => Date.now(), cache: new Cache(store), relogin: (e) => autoLogin(ctx, e), waitMs: MCP_LOGIN_WAIT_MS, mcp: true };
       const result = await serial(async () => {
         const r = await runOp(op2, ctx, args ?? {});
         await session.release();

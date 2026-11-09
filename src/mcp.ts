@@ -48,7 +48,7 @@ export function buildServer(session: Session, store: Store): McpServer {
       inputSchema: mcpShape(op),
       annotations: { readOnlyHint: op.effect === 'read', destructiveHint: false, openWorldHint: true },
     }, async (args: Record<string, unknown>) => {
-      const ctx: Ctx = { store, session, log: (m) => process.stderr.write(`${m}\n`), cwd: process.cwd(), now: () => Date.now(), cache: new Cache(store), relogin: (e) => autoLogin(ctx, e), waitMs: MCP_LOGIN_WAIT_MS };
+      const ctx: Ctx = { store, session, log: (m) => process.stderr.write(`${m}\n`), cwd: process.cwd(), now: () => Date.now(), cache: new Cache(store), relogin: (e) => autoLogin(ctx, e), waitMs: MCP_LOGIN_WAIT_MS, mcp: true };
       const result = await serial(async () => { const r = await runOp(op, ctx, args ?? {}); await session.release(); return r; });
       return {
         // 失败但有上次的结果时一并返回，并写明是什么时候的

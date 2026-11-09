@@ -1,5 +1,5 @@
 import { accessSync, constants as fsConstants, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
-import { basename, dirname, extname, join, resolve } from 'node:path';
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { z } from 'zod';
 import { ensureWebvpn, login, loginAt, platformStatus, sessionAuth, webvpnAlive } from './core/auth';
 import type { Cache } from './core/cache';
@@ -54,6 +54,8 @@ export interface Ctx {
    * 等不到时先返回「等待中」，登录窗口留着，在后台继续等用户完成。命令行不设（等到登录完成为止）。
    */
   waitMs?: number;
+  /** 被 MCP 调用（AI 传的路径只允许落在当前目录下） */
+  mcp?: boolean;
 }
 
 export type Effect = 'read' | 'local-write' | 'auth';
@@ -92,7 +94,11 @@ const flag = (description: string) => {
   FLAGS.add(schema);
   return schema;
 };
-const int = (description: string, min = 1, max = 1000) => z.coerce.number().int().min(min).max(max).optional().describe(description);
+const int = (description: string, min = 1, max = 1000) => z.preprocess(
+  // 命令行里 --days 后面忘了写数字时会变成 true：不能悄悄当成 1
+  (v) => (typeof v === 'boolean' ? Number.NaN : v === '' ? undefined : v),
+  z.coerce.number({ error: '要写一个数字' }).int('要写整数').min(min).max(max),
+).optional().describe(description);
 
 const DAY = 86_400_000;
 const shanghaiDate = (iso?: string) => iso ? new Date(iso).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) : undefined;
@@ -351,12 +357,22 @@ function overviewDeps(ctx: Ctx): OverviewDeps {
 }
 
 const needPrompt = (ctx: Ctx) => {
-  if (!ctx.prompt) throw new FduError('BAD_ARGS', '这个操作需要在终端里输入密码，请直接在终端运行。');
+  if (!ctx.prompt) throw new FduError('NEED_TERMINAL', '这个操作需要在终端里输入密码，AI 和脚本不能代替。', '请用户自己打开终端运行这条命令。');
   return ctx.prompt;
 };
 
 /** 实时数据（人数、空闲、余额）的缓存只留 30 分钟：太旧的结果会误导 */
 const REALTIME_TTL = 30 * 60_000;
+
+const isFudanHost = (url: string) => { try { const h = new URL(url).hostname; return h === 'fudan.edu.cn' || h.endsWith('.fudan.edu.cn'); } catch { return false; } };
+
+/** 输出路径：命令行里随你写；MCP 里 AI 传的路径只能落在当前目录下 */
+function outPath(ctx: Ctx, out: string | undefined, fallback: string): string {
+  const target = resolve(ctx.cwd, out ?? fallback);
+  const rel = relative(resolve(ctx.cwd), target);
+  if (ctx.mcp && (rel.startsWith('..') || isAbsolute(rel))) throw new FduError('BAD_ARGS', `通过 MCP 调用时只能写到当前目录（${ctx.cwd}）下面。`, '去掉 out 参数，或者写成当前目录下的相对路径。');
+  return target;
+}
 
 export const OPS: Op[] = [
   // ======================= 账号 =======================
@@ -420,6 +436,7 @@ export const OPS: Op[] = [
             return { writable: true, mode: statSync(ctx.store.dir).mode };
           } catch { return { writable: false }; }
         },
+        corrupted: () => { for (const f of ['state.json', 'mail.json', 'hole.json', 'library.json']) ctx.store.readJson(f); return [...new Set(ctx.store.corrupted)]; },
         secretFiles: () => ['state.json', 'mail.json', 'hole.json', 'library.json'].flatMap((name) => {
           try { return [{ name, mode: statSync(ctx.store.path(name)).mode }]; } catch { return []; }
         }),
@@ -550,7 +567,7 @@ export const OPS: Op[] = [
         }
       });
       if (!events.length && firstError) throw firstError;
-      const target = resolve(ctx.cwd, a.out ?? 'fudan.ics');
+      const target = outPath(ctx, a.out, 'fudan.ics');
       mkdirSync(dirname(target), { recursive: true });
       const path = a.overwrite ? target : safeTarget(dirname(target), basename(target));
       writeFileSync(path, buildIcs(events, { name: semester ? `复旦课表 ${semester}` : '复旦课表', now: ctx.now() }), { mode: 0o644 });
@@ -610,7 +627,7 @@ export const OPS: Op[] = [
     params: { file: z.string().describe('文件 id（来自 elearning files）'), out: z.string().optional().describe('保存到哪个文件夹，默认当前目录') },
     async run(ctx, a) {
       const f = await elearning(ctx).downloadFile(a.file);
-      const dir = resolve(ctx.cwd, a.out ?? '.');
+      const dir = outPath(ctx, a.out, '.');
       mkdirSync(dir, { recursive: true });
       const target = safeTarget(dir, f.name);
       writeFileSync(target, f.data, { flag: 'wx' });
@@ -701,11 +718,10 @@ export const OPS: Op[] = [
       const reader = ctx.session.reader('jwfw');
       const r = await readLessons(reader, { keyword: a.keyword, semester: a.semester, page: a.page, size: a.size });
       if (!a.syllabus) return r;
-      const lessons = [];
-      for (const [i, l] of r.lessons.entries()) {
-        if (i >= 5 || !l.id) { lessons.push(l); continue; }
-        lessons.push({ ...l, syllabus: await readSyllabus(reader, l.id, 8000).catch((e) => ({ error: (e as Error).message })) });
-      }
+      // 前 5 个教学班的大纲，3 个一起读
+      const lessons = await pool([...r.lessons.entries()], 3, async ([i, l]) => (i >= 5 || !l.id
+        ? l
+        : { ...l, syllabus: await readSyllabus(reader, l.id, 8000).catch((e) => ({ error: (e as Error).message })) }));
       return { ...r, lessons };
     },
   }),
@@ -1043,7 +1059,10 @@ export const OPS: Op[] = [
     params: { url: z.string().url().describe('通知链接（来自 notices list）') },
     async run(ctx, a) {
       if (!/^https?:\/\//.test(a.url)) throw new FduError('BAD_ARGS', '只支持 http / https 链接。');
+      // 只读复旦自己的网站（内置的通知来源都在 fudan.edu.cn 下），不让它被用来访问别的地址
+      if (!isFudanHost(a.url)) throw new FduError('BAD_ARGS', '只能读复旦网站（*.fudan.edu.cn）上的通知。', '链接请用 fdu notices list 返回的。');
       const page = await ctx.session.raw(a.url);
+      if (!isFudanHost(page.url)) throw new FduError('BAD_ARGS', '这个链接跳转到了复旦以外的网站，没有读取。');
       if (page.status >= 400) throw new FduError('UPSTREAM', `网站返回 ${page.status}`);
       const d = parseNoticeDetail(page.text, page.url);
       return { url: page.url, ...d, text: d.text.slice(0, 20_000) };
