@@ -6,7 +6,8 @@ import type { Store } from './store';
 
 export type StorageState = Awaited<ReturnType<APIRequestContext['storageState']>>;
 export interface RawResponse { status: number; url: string; contentType: string; text: string }
-export interface FetchInit { method?: string; headers?: Record<string, string>; body?: string; timeoutMs?: number }
+/** retries：GET / HEAD 遇到网络错误或 429 / 5xx 时重试几次（默认 2；POST 等不重试） */
+export interface FetchInit { method?: string; headers?: Record<string, string>; body?: string; timeoutMs?: number; retries?: number }
 
 const STATE = 'state.json';
 /**
@@ -19,6 +20,34 @@ export function userAgent(platform: string = process.platform): string {
 }
 const UA = userAgent();
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** 值得重试的网络错误：超时、连接被重置、DNS 暂时解析不了 */
+export function transientError(e: unknown): 'timeout' | 'network' | undefined {
+  const m = String((e as Error)?.message ?? e);
+  if (/timeout|timed out|ETIMEDOUT/i.test(m)) return 'timeout';
+  if (/ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|socket hang up|other side closed|net::ERR_/i.test(m)) return 'network';
+  return undefined;
+}
+
+/**
+ * 启动 Chromium 的参数：root 用户（容器、虚拟机里常见）必须关掉沙箱，Linux 上 /dev/shm 常常很小；
+ * FDU_CHROMIUM_ARGS 可以再补参数（空格分开）。
+ */
+export function chromiumArgs(env: NodeJS.ProcessEnv = process.env, platform: string = process.platform, uid: number | undefined = process.getuid?.()): string[] {
+  const args: string[] = [];
+  if (platform === 'linux' && uid === 0) args.push('--no-sandbox');
+  if (platform === 'linux') args.push('--disable-dev-shm-usage');
+  for (const a of (env.FDU_CHROMIUM_ARGS ?? '').split(/\s+/).filter(Boolean)) if (!args.includes(a)) args.push(a);
+  return args;
+}
+
+/** 给一个承诺加上超时 */
+export async function withTimeout<T>(p: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([p, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(message)), ms); })]);
+  } finally { if (timer) clearTimeout(timer); }
+}
 
 /** 设置了 HTTPS_PROXY / HTTP_PROXY 时走代理（公司 / 实验室网络），NO_PROXY 里的地址直连 */
 export function proxyFromEnv(env: NodeJS.ProcessEnv = process.env): { server: string; bypass?: string } | undefined {
@@ -45,6 +74,8 @@ export class Session {
   private fromBrowser = false;
   /** 浏览器最后停在的地址（排查登录问题用，只取路径） */
   lastUrl = '';
+  /** 上次确认 WebVPN 已登录的时间（检查要开浏览器，短时间内不重复查） */
+  webvpnAliveAt?: number;
   /** 常驻的无界面浏览器页面：只认真浏览器请求的系统（WebVPN）在这里发请求 */
   private bpage?: { context: BrowserContext; page: Page };
 
@@ -65,10 +96,28 @@ export class Session {
   /** 原样请求，不判断是否登录（公开接口、树洞等用） */
   async raw(url: string, init: FetchInit = {}): Promise<RawResponse & { body: Buffer; headers: Record<string, string> }> {
     const ctx = await this.api();
-    const res = await ctx.fetch(url, {
-      method: init.method ?? 'GET', headers: init.headers, data: init.body, maxRedirects: 20,
-      timeout: init.timeoutMs ?? 20_000, failOnStatusCode: false,
-    });
+    const method = init.method ?? 'GET';
+    // 只有不改变数据的请求才重试；超时本身已经等了很久，最多再试一次
+    const idempotent = method === 'GET' || method === 'HEAD';
+    let retries = idempotent ? init.retries ?? 2 : 0;
+    let res;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        res = await ctx.fetch(url, { method, headers: init.headers, data: init.body, maxRedirects: 20, timeout: init.timeoutMs ?? 20_000, failOnStatusCode: false });
+      } catch (e) {
+        const kind = transientError(e);
+        if (kind === 'timeout') retries = Math.min(retries, 1);
+        if (!kind || attempt >= retries) throw e;
+        await sleep(800 * 2 ** attempt);
+        continue;
+      }
+      if (attempt < retries && [429, 502, 503, 504].includes(res.status())) {
+        const after = Number(res.headers()['retry-after']);
+        await sleep(Number.isFinite(after) && after > 0 && after <= 10 ? after * 1000 : 800 * 2 ** attempt);
+        continue;
+      }
+      break;
+    }
     this.dirty = true;
     const body = await res.body();
     const headers = res.headers();
@@ -87,19 +136,32 @@ export class Session {
   /** 找浏览器：FDU_BROWSER 指定的路径 → 本机 Chrome → Edge → Playwright 自带的 Chromium */
   async launch(headless: boolean): Promise<Browser> {
     const path = this.opts.browserPath ?? process.env.FDU_BROWSER;
-    const headed = !headless || !!this.opts.headed;
-    if (path) return chromium.launch({ executablePath: path, headless: !headed });
-    for (const channel of ['chrome', 'msedge']) {
-      try { return await chromium.launch({ channel, headless: !headed }); } catch { /* 没装这个浏览器 */ }
+    const options = { headless: !(!headless || !!this.opts.headed), args: chromiumArgs() };
+    // 依次试：指定的路径 → Chrome → Edge → Playwright 自带的 Chromium；每一种失败的原因都记下来
+    const tries: [string, () => Promise<Browser>][] = path
+      ? [[`FDU_BROWSER（${path}）`, () => chromium.launch({ ...options, executablePath: path })]]
+      : [['Chrome', () => chromium.launch({ ...options, channel: 'chrome' })], ['Edge', () => chromium.launch({ ...options, channel: 'msedge' })], ['Playwright 自带的 Chromium', () => chromium.launch(options)]];
+    const failures: string[] = [];
+    for (const [name, start] of tries) {
+      try { return await start(); } catch (e) {
+        failures.push(`${name}：${String((e as Error).message ?? e).replace(/\u001b\[[0-9;]*m/g, '').split('\n').find((l) => l.trim() && !/^browserType\.launch/.test(l.trim()))?.trim().slice(0, 160) ?? '启动失败'}`);
+      }
     }
-    try { return await chromium.launch({ headless: !headed }); } catch { /* 也没有 Playwright 的 Chromium */ }
-    throw new FduError('NO_BROWSER', '没有找到 Chrome 或 Edge 浏览器。登录和部分页面需要用浏览器打开。',
-      '安装 Chrome / Edge，或者设置环境变量 FDU_BROWSER 为 Chromium 内核浏览器的可执行文件路径。');
+    const missing = failures.every((f) => /Executable doesn't exist|Chromium distribution .* is not found|not found at|ENOENT/i.test(f));
+    throw new FduError('NO_BROWSER', `${missing ? '没有找到 Chrome 或 Edge 浏览器' : '浏览器启动失败'}。登录和部分页面需要用浏览器打开。试过：${failures.join('；')}`,
+      missing
+        ? '安装 Chrome / Edge；或者设置 FDU_BROWSER 为 Chromium 内核浏览器的路径；或者运行 npx playwright install chromium。'
+        : '在容器或 root 下运行时已自动加了 --no-sandbox；还需要别的启动参数时用 FDU_CHROMIUM_ARGS 补（空格分开），或用 FDU_BROWSER 换一个浏览器。');
   }
 
   /** 能不能启动无界面浏览器（fdu doctor 用），返回浏览器名称和版本 */
-  async probeBrowser(): Promise<string> {
-    const browser = await this.launch(true);
+  async probeBrowser(timeoutMs = 15_000): Promise<string> {
+    const launching = this.launch(true);
+    // 启动卡住时不让 doctor 一起卡住；超时后启动成功的浏览器也要关掉
+    const browser = await withTimeout(launching, timeoutMs, `浏览器 ${timeoutMs / 1000} 秒内没有启动起来`).catch((e) => {
+      void launching.then((b) => b.close()).catch(() => undefined);
+      throw e;
+    });
     try {
       const path = this.opts.browserPath ?? process.env.FDU_BROWSER;
       return `${browser.browserType().name()} ${browser.version()}${path ? `（${path}）` : ''}`;

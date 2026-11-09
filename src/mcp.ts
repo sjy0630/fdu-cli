@@ -19,8 +19,13 @@ const LOGIN_NOTE: Record<Op['login'], string> = {
 
 /** MCP 里的参数：命令行的布尔开关换成普通布尔值 */
 export function mcpShape(op: Op): z.ZodRawShape {
-  return Object.fromEntries(Object.entries(op.params).map(([k, v]) => [k, FLAGS.has(v as z.ZodType) ? z.boolean().optional().describe((v as z.ZodType).description ?? '') : v]));
+  return Object.fromEntries(Object.entries(op.params)
+    .filter(([k]) => !op.mcpOmit?.includes(k))
+    .map(([k, v]) => [k, FLAGS.has(v as z.ZodType) ? z.boolean().optional().describe((v as z.ZodType).description ?? '') : v]));
 }
+
+/** MCP 里一次调用最多等登录多久（客户端的工具调用一般一分钟左右超时） */
+export const MCP_LOGIN_WAIT_MS = (Number(process.env.FDU_MCP_LOGIN_WAIT) || 50) * 1000;
 
 export function toolDescription(op: Op): string {
   return [
@@ -33,6 +38,9 @@ export function toolDescription(op: Op): string {
 
 export function buildServer(session: Session, store: Store): McpServer {
   const server = new McpServer({ name: 'fudan', version: VERSION });
+  // 所有调用共用一个登录会话和浏览器：排队一个个来，免得一个调用结束时关掉另一个正在用的浏览器
+  let queue: Promise<unknown> = Promise.resolve();
+  const serial = <T>(fn: () => Promise<T>): Promise<T> => { const next = queue.then(fn, fn); queue = next.catch(() => undefined); return next; };
   for (const op of OPS) {
     if (op.mcp === false) continue;
     server.registerTool(op.name.replace('.', '_'), {
@@ -40,9 +48,8 @@ export function buildServer(session: Session, store: Store): McpServer {
       inputSchema: mcpShape(op),
       annotations: { readOnlyHint: op.effect === 'read', destructiveHint: false, openWorldHint: true },
     }, async (args: Record<string, unknown>) => {
-      const ctx: Ctx = { store, session, log: (m) => process.stderr.write(`${m}\n`), cwd: process.cwd(), now: () => Date.now(), cache: new Cache(store), relogin: (e) => autoLogin(ctx, e) };
-      const result = await runOp(op, ctx, args ?? {});
-      await session.release();
+      const ctx: Ctx = { store, session, log: (m) => process.stderr.write(`${m}\n`), cwd: process.cwd(), now: () => Date.now(), cache: new Cache(store), relogin: (e) => autoLogin(ctx, e), waitMs: MCP_LOGIN_WAIT_MS };
+      const result = await serial(async () => { const r = await runOp(op, ctx, args ?? {}); await session.release(); return r; });
       return {
         // 失败但有上次的结果时一并返回，并写明是什么时候的
         content: [{ type: 'text' as const, text: JSON.stringify(result.ok ? result.data : { ...result.error, ...(result.cached ? { cached: result.cached } : {}) }, null, 1) }],

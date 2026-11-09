@@ -47,8 +47,13 @@ export interface Ctx {
   now(): number;
   /** 查询结果缓存（没有时不缓存） */
   cache?: Cache;
-  /** 需要登录时尝试自动登录（弹出浏览器）；登录成功返回 true，命令会重试一次 */
-  relogin?(e: unknown): Promise<boolean>;
+  /** 需要登录时尝试自动登录（弹出浏览器）；登录成功返回 true，命令会重试一次；还在等用户时返回 'pending' */
+  relogin?(e: unknown): Promise<boolean | 'pending'>;
+  /**
+   * 一次调用最多等登录多久（毫秒）。MCP 客户端的工具调用一般一分钟左右就超时：
+   * 等不到时先返回「等待中」，登录窗口留着，在后台继续等用户完成。命令行不设（等到登录完成为止）。
+   */
+  waitMs?: number;
 }
 
 export type Effect = 'read' | 'local-write' | 'auth';
@@ -66,6 +71,8 @@ export interface Op {
   effect: Effect;
   /** 需要在终端里输入密码的操作不开放给 MCP */
   mcp?: boolean;
+  /** MCP 里不开放的参数（如会丢掉登录状态的 force） */
+  mcpOmit?: string[];
   examples?: string[];
   /** 只读操作默认缓存结果（--cached、失败时附带上次结果）；false 表示不缓存 */
   cache?: boolean;
@@ -316,7 +323,10 @@ async function roomsDayPage(ctx: Ctx, building: string, day: string): Promise<Da
   await ensureWebvpn(ctx.session);
   const r = await ctx.session.browserFetch(dayPageUrl(building, day), { timeoutMs: 30_000 });
   if (/\/urp\/|authCenter|\/idp\//.test(r.url)) throw new FduError('NEED_LOGIN', '空教室系统需要登录。', ROOMS_LOGIN_HINT, { op: 'rooms.login' });
-  if (/webvpn\.fudan\.edu\.cn\/login/.test(r.url)) throw new FduError('NEED_LOGIN', 'WebVPN 登录已过期。', '运行 `fdu login --webvpn`。', { op: 'auth.login', args: { webvpn: true } });
+  if (/webvpn\.fudan\.edu\.cn\/login/.test(r.url)) {
+    ctx.session.webvpnAliveAt = undefined;
+    throw new FduError('NEED_LOGIN', 'WebVPN 登录已过期。', '运行 `fdu login --webvpn`。', { op: 'auth.login', args: { webvpn: true } });
+  }
   return parseDayPage(r.text);
 }
 
@@ -346,8 +356,8 @@ const needPrompt = (ctx: Ctx) => {
 export const OPS: Op[] = [
   // ======================= 账号 =======================
   op({
-    name: 'auth.login', summary: '登录复旦统一身份认证：打开浏览器，你自己输入账号密码、完成二次验证；之后 eLearning、教务、校园卡等共用这个登录。',
-    login: 'none', effect: 'auth',
+    name: 'auth.login', summary: '登录复旦统一身份认证：打开浏览器，你自己输入账号密码、完成二次验证；之后 eLearning、教务、校园卡等共用这个登录。MCP 里最多等 50 秒：用户还没完成时返回 pending，窗口保持打开，完成后用 auth_status 确认。',
+    login: 'none', effect: 'auth', mcpOmit: ['force'],
     params: {
       webvpn: flag('顺便建立 WebVPN 会话（校外访问树洞需要）'),
       force: flag('丢弃已有登录状态，重新登录'),
@@ -355,6 +365,17 @@ export const OPS: Op[] = [
     },
     examples: ['fdu login', 'fdu login --webvpn', 'fdu login --url https://my.fudan.edu.cn/simple_list/stqk'],
     async run(ctx, a) {
+      if (ctx.waitMs) {
+        // MCP：在后台登录，最多等 ctx.waitMs；等不到先告诉 AI 在等用户
+        const r = await runLoginTask(ctx, async () => {
+          if (a.url) { if (!ctx.session.hasState()) await login(ctx.session, { onWaiting: ctx.log }); return loginAt(ctx.session, { url: a.url }, { onWaiting: ctx.log }); }
+          await login(ctx.session, { webvpn: a.webvpn, onWaiting: ctx.log });
+          return true;
+        });
+        if (r === 'pending') return { pending: true, message: '已在用户电脑上打开登录窗口，等用户完成登录或验证（窗口保持打开）。完成后调用 auth_status 确认，或直接重试刚才的查询。' };
+        if (!r) throw new FduError('NEED_LOGIN', '没有完成登录。', '请用户在终端运行 `fdu login`。');
+        return { loggedIn: true, stateFile: ctx.store.path('state.json') };
+      }
       if (a.force) ctx.session.clear();
       if (a.url) {
         if (!ctx.session.hasState()) await login(ctx.session, { onWaiting: ctx.log });
@@ -395,7 +416,7 @@ export const OPS: Op[] = [
           } catch { return { writable: false }; }
         },
         browser: () => ctx.session.probeBrowser(),
-        reach: async (url) => { const r = await ctx.session.raw(url, { timeoutMs: 10_000 }); return { status: r.status, url: r.url }; },
+        reach: async (url) => { const r = await ctx.session.raw(url, { timeoutMs: 30_000, retries: 1 }); return { status: r.status, url: r.url }; },
         login: async () => {
           const hasState = ctx.session.hasState();
           if (!hasState) return { hasState, elearning: 'need_login', jwfw: 'need_login', webvpn: false };
@@ -1108,7 +1129,20 @@ export function findOp(name: string): Op | undefined {
  */
 const RELOGIN_LOCKS = new WeakMap<Session, Promise<boolean>>();
 
-export function autoLogin(ctx: Ctx, e: unknown): Promise<boolean> {
+/** 跑一个登录任务：同一时间只跑一个；设了 ctx.waitMs 时最多等这么久，等不到返回 'pending'，任务在后台继续 */
+export function runLoginTask(ctx: Ctx, attempt: () => Promise<boolean>): Promise<boolean | 'pending'> {
+  let task = RELOGIN_LOCKS.get(ctx.session);
+  if (!task) {
+    const p = attempt().catch(() => false).finally(() => { if (RELOGIN_LOCKS.get(ctx.session) === p) RELOGIN_LOCKS.delete(ctx.session); });
+    RELOGIN_LOCKS.set(ctx.session, p);
+    task = p;
+  }
+  if (!ctx.waitMs) return task;
+  let timer: NodeJS.Timeout | undefined;
+  return Promise.race([task, new Promise<'pending'>((r) => { timer = setTimeout(() => r('pending'), ctx.waitMs); })]).finally(() => clearTimeout(timer));
+}
+
+export function autoLogin(ctx: Ctx, e: unknown): Promise<boolean | 'pending'> {
   if (process.env.FDU_AUTO_LOGIN === '0') return Promise.resolve(false);
   const timeoutMs = (Number(process.env.FDU_LOGIN_WAIT) || 180) * 1000;
   let attempt: (() => Promise<boolean>) | undefined;
@@ -1122,9 +1156,5 @@ export function autoLogin(ctx: Ctx, e: unknown): Promise<boolean> {
     if (target) attempt = async () => { ctx.log(`需要登录（${target.name}），已打开浏览器……`); await target.run(ctx, e.relogin!.args ?? {}); return true; };
   }
   if (!attempt) return Promise.resolve(false);
-  const running = RELOGIN_LOCKS.get(ctx.session);
-  if (running) return running;
-  const p = attempt().catch(() => false).finally(() => RELOGIN_LOCKS.delete(ctx.session));
-  RELOGIN_LOCKS.set(ctx.session, p);
-  return p;
+  return runLoginTask(ctx, attempt);
 }

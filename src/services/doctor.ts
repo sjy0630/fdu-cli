@@ -44,20 +44,23 @@ export async function runDoctor(d: DoctorDeps): Promise<{ healthy: boolean; chec
   try {
     checks.push({ name: '浏览器', status: 'ok', detail: await d.browser() });
   } catch (e) {
-    checks.push({ name: '浏览器', status: 'fail', detail: `没有找到可用的浏览器：${String((e as Error).message ?? e).split('\n')[0].slice(0, 160)}`, fix: '安装 Chrome 或 Edge；或者设置 FDU_BROWSER 为 Chromium 内核浏览器的路径；或者运行 npx playwright install chromium' });
+    const err = e as { message?: string; hint?: string };
+    checks.push({ name: '浏览器', status: 'fail', detail: String(err.message ?? e).split('\n')[0].slice(0, 600), fix: err.hint ?? '安装 Chrome 或 Edge；或者设置 FDU_BROWSER 为 Chromium 内核浏览器的路径；或者运行 npx playwright install chromium' });
   }
 
   if (d.proxy) checks.push({ name: '代理', status: 'ok', detail: `使用代理 ${d.proxy.replace(/\/\/[^@/]*@/, '//***@')}` });
 
   const clean = (e: unknown) => String((e as Error).message ?? e).replace(/^apiRequestContext\.\w+:\s*/, '').split('\n')[0].slice(0, 120);
+  const secs = (since: number) => `${((Date.now() - since) / 1000).toFixed(1)} 秒`;
   const reach = await Promise.all(HOSTS.map(async (h) => {
+    const started = Date.now();
     try {
       const r = await d.reach(h.url);
       // 2xx / 3xx 正常；4xx 能连上但被拒绝（比如代理或防火墙拦了）；5xx 学校系统出错
       const level: Check['status'] = r.status >= 200 && r.status < 400 ? 'ok' : r.status >= 400 && r.status < 500 ? 'warn' : h.required ? 'fail' : 'warn';
-      return { h, level, detail: `HTTP ${r.status}${r.status === 403 ? '（被拒绝访问，检查代理或网络限制）' : ''}` };
+      return { h, level, detail: `HTTP ${r.status}，${secs(started)}${r.status === 403 ? '（被拒绝访问，检查代理或网络限制）' : ''}` };
     } catch (e) {
-      return { h, level: (h.required ? 'fail' : 'warn') as Check['status'], detail: `连不上：${clean(e)}` };
+      return { h, level: (h.required ? 'fail' : 'warn') as Check['status'], detail: `连不上（${secs(started)}）：${clean(e)}` };
     }
   }));
   for (const { h, level, detail } of reach) {

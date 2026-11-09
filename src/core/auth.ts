@@ -74,8 +74,12 @@ export async function webvpnCheck(session: Session): Promise<{ alive: boolean; d
   } catch (e) { return { alive: false, detail: `打不开：${String((e as Error).message ?? e).split('\n')[0].slice(0, 80)}` }; }
 }
 
-export async function webvpnAlive(session: Session): Promise<boolean> {
-  return (await webvpnCheck(session)).alive;
+/** WebVPN 是否已登录。检查要开浏览器，2 分钟内查过且有效就不再查（fresh 时强制重查） */
+export async function webvpnAlive(session: Session, opts: { fresh?: boolean } = {}): Promise<boolean> {
+  if (!opts.fresh && session.webvpnAliveAt && Date.now() - session.webvpnAliveAt < 120_000) return true;
+  const alive = (await webvpnCheck(session)).alive;
+  session.webvpnAliveAt = alive ? Date.now() : undefined;
+  return alive;
 }
 
 /**
@@ -84,21 +88,28 @@ export async function webvpnAlive(session: Session): Promise<boolean> {
  * 需要重新输入密码时：headless=false 打开有界面的窗口让你登录，否则提示运行 fdu login --webvpn。
  */
 export async function ensureWebvpn(session: Session, opts: { headless?: boolean } = {}): Promise<void> {
-  if (await webvpnAlive(session)) return;
+  // 要打开窗口登录时（自动登录、fdu login --webvpn）不信缓存
+  if (await webvpnAlive(session, { fresh: opts.headless === false })) return;
   const page = await session.browserPage(WEBVPN_HOME);
   await page.goto(WEBVPN_CAS, { waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => undefined);
+  // 复旦账号有效时几秒内自动走完；停在统一身份认证登录页超过 4 秒说明要重新登录，不再空等
+  let onUisSince = 0;
   for (let i = 0; i < 40; i++) {
     const u = new URL(page.url());
     if (u.hostname === 'webvpn.fudan.edu.cn' && !u.pathname.startsWith('/login')) break;
+    if (isUisLoginUrl(page.url())) {
+      onUisSince ||= Date.now();
+      if (Date.now() - onUisSince > 4000) break;
+    } else onUisSince = 0;
     await new Promise((r) => setTimeout(r, 500));
   }
-  if (await webvpnAlive(session)) return;
+  if (await webvpnAlive(session, { fresh: true })) return;
   if (opts.headless === false) {
     await session.withPage(WEBVPN_CAS, async (p) => {
       const u = new URL(p.url());
       return u.hostname === 'webvpn.fudan.edu.cn' && !u.pathname.startsWith('/login');
     }, { headless: false, timeoutMs: 300_000, stuckOnUisMs: 6000 });
-    if (await webvpnAlive(session)) return;
+    if (await webvpnAlive(session, { fresh: true })) return;
   }
   const check = await webvpnCheck(session);
   throw new FduError('NEED_LOGIN', `没能建立 WebVPN 会话（检查时停在 ${check.detail}）。`, '运行 `fdu login --webvpn`，在浏览器里完成登录；还是不行请把这条信息发给开发者。', { op: 'auth.login', args: { webvpn: true } });

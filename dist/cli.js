@@ -82,6 +82,29 @@ function userAgent(platform = process.platform) {
 }
 var UA = userAgent();
 var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+function transientError(e) {
+  const m = String(e?.message ?? e);
+  if (/timeout|timed out|ETIMEDOUT/i.test(m)) return "timeout";
+  if (/ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|socket hang up|other side closed|net::ERR_/i.test(m)) return "network";
+  return void 0;
+}
+function chromiumArgs(env = process.env, platform = process.platform, uid = process.getuid?.()) {
+  const args = [];
+  if (platform === "linux" && uid === 0) args.push("--no-sandbox");
+  if (platform === "linux") args.push("--disable-dev-shm-usage");
+  for (const a of (env.FDU_CHROMIUM_ARGS ?? "").split(/\s+/).filter(Boolean)) if (!args.includes(a)) args.push(a);
+  return args;
+}
+async function withTimeout(p, ms, message) {
+  let timer;
+  try {
+    return await Promise.race([p, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), ms);
+    })]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 function proxyFromEnv(env = process.env) {
   const server = env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy;
   if (!server) return void 0;
@@ -102,6 +125,8 @@ var Session = class {
   fromBrowser = false;
   /** 浏览器最后停在的地址（排查登录问题用，只取路径） */
   lastUrl = "";
+  /** 上次确认 WebVPN 已登录的时间（检查要开浏览器，短时间内不重复查） */
+  webvpnAliveAt;
   /** 常驻的无界面浏览器页面：只认真浏览器请求的系统（WebVPN）在这里发请求 */
   bpage;
   hasState() {
@@ -118,14 +143,27 @@ var Session = class {
   /** 原样请求，不判断是否登录（公开接口、树洞等用） */
   async raw(url, init = {}) {
     const ctx = await this.api();
-    const res = await ctx.fetch(url, {
-      method: init.method ?? "GET",
-      headers: init.headers,
-      data: init.body,
-      maxRedirects: 20,
-      timeout: init.timeoutMs ?? 2e4,
-      failOnStatusCode: false
-    });
+    const method = init.method ?? "GET";
+    const idempotent = method === "GET" || method === "HEAD";
+    let retries = idempotent ? init.retries ?? 2 : 0;
+    let res;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        res = await ctx.fetch(url, { method, headers: init.headers, data: init.body, maxRedirects: 20, timeout: init.timeoutMs ?? 2e4, failOnStatusCode: false });
+      } catch (e) {
+        const kind = transientError(e);
+        if (kind === "timeout") retries = Math.min(retries, 1);
+        if (!kind || attempt >= retries) throw e;
+        await sleep(800 * 2 ** attempt);
+        continue;
+      }
+      if (attempt < retries && [429, 502, 503, 504].includes(res.status())) {
+        const after = Number(res.headers()["retry-after"]);
+        await sleep(Number.isFinite(after) && after > 0 && after <= 10 ? after * 1e3 : 800 * 2 ** attempt);
+        continue;
+      }
+      break;
+    }
     this.dirty = true;
     const body3 = await res.body();
     const headers = res.headers();
@@ -141,27 +179,30 @@ var Session = class {
   /** 找浏览器：FDU_BROWSER 指定的路径 → 本机 Chrome → Edge → Playwright 自带的 Chromium */
   async launch(headless) {
     const path = this.opts.browserPath ?? process.env.FDU_BROWSER;
-    const headed = !headless || !!this.opts.headed;
-    if (path) return chromium.launch({ executablePath: path, headless: !headed });
-    for (const channel of ["chrome", "msedge"]) {
+    const options = { headless: !(!headless || !!this.opts.headed), args: chromiumArgs() };
+    const tries = path ? [[`FDU_BROWSER\uFF08${path}\uFF09`, () => chromium.launch({ ...options, executablePath: path })]] : [["Chrome", () => chromium.launch({ ...options, channel: "chrome" })], ["Edge", () => chromium.launch({ ...options, channel: "msedge" })], ["Playwright \u81EA\u5E26\u7684 Chromium", () => chromium.launch(options)]];
+    const failures = [];
+    for (const [name, start] of tries) {
       try {
-        return await chromium.launch({ channel, headless: !headed });
-      } catch {
+        return await start();
+      } catch (e) {
+        failures.push(`${name}\uFF1A${String(e.message ?? e).replace(/\u001b\[[0-9;]*m/g, "").split("\n").find((l) => l.trim() && !/^browserType\.launch/.test(l.trim()))?.trim().slice(0, 160) ?? "\u542F\u52A8\u5931\u8D25"}`);
       }
     }
-    try {
-      return await chromium.launch({ headless: !headed });
-    } catch {
-    }
+    const missing = failures.every((f) => /Executable doesn't exist|Chromium distribution .* is not found|not found at|ENOENT/i.test(f));
     throw new FduError(
       "NO_BROWSER",
-      "\u6CA1\u6709\u627E\u5230 Chrome \u6216 Edge \u6D4F\u89C8\u5668\u3002\u767B\u5F55\u548C\u90E8\u5206\u9875\u9762\u9700\u8981\u7528\u6D4F\u89C8\u5668\u6253\u5F00\u3002",
-      "\u5B89\u88C5 Chrome / Edge\uFF0C\u6216\u8005\u8BBE\u7F6E\u73AF\u5883\u53D8\u91CF FDU_BROWSER \u4E3A Chromium \u5185\u6838\u6D4F\u89C8\u5668\u7684\u53EF\u6267\u884C\u6587\u4EF6\u8DEF\u5F84\u3002"
+      `${missing ? "\u6CA1\u6709\u627E\u5230 Chrome \u6216 Edge \u6D4F\u89C8\u5668" : "\u6D4F\u89C8\u5668\u542F\u52A8\u5931\u8D25"}\u3002\u767B\u5F55\u548C\u90E8\u5206\u9875\u9762\u9700\u8981\u7528\u6D4F\u89C8\u5668\u6253\u5F00\u3002\u8BD5\u8FC7\uFF1A${failures.join("\uFF1B")}`,
+      missing ? "\u5B89\u88C5 Chrome / Edge\uFF1B\u6216\u8005\u8BBE\u7F6E FDU_BROWSER \u4E3A Chromium \u5185\u6838\u6D4F\u89C8\u5668\u7684\u8DEF\u5F84\uFF1B\u6216\u8005\u8FD0\u884C npx playwright install chromium\u3002" : "\u5728\u5BB9\u5668\u6216 root \u4E0B\u8FD0\u884C\u65F6\u5DF2\u81EA\u52A8\u52A0\u4E86 --no-sandbox\uFF1B\u8FD8\u9700\u8981\u522B\u7684\u542F\u52A8\u53C2\u6570\u65F6\u7528 FDU_CHROMIUM_ARGS \u8865\uFF08\u7A7A\u683C\u5206\u5F00\uFF09\uFF0C\u6216\u7528 FDU_BROWSER \u6362\u4E00\u4E2A\u6D4F\u89C8\u5668\u3002"
     );
   }
   /** 能不能启动无界面浏览器（fdu doctor 用），返回浏览器名称和版本 */
-  async probeBrowser() {
-    const browser = await this.launch(true);
+  async probeBrowser(timeoutMs = 15e3) {
+    const launching = this.launch(true);
+    const browser = await withTimeout(launching, timeoutMs, `\u6D4F\u89C8\u5668 ${timeoutMs / 1e3} \u79D2\u5185\u6CA1\u6709\u542F\u52A8\u8D77\u6765`).catch((e) => {
+      void launching.then((b) => b.close()).catch(() => void 0);
+      throw e;
+    });
     try {
       const path = this.opts.browserPath ?? process.env.FDU_BROWSER;
       return `${browser.browserType().name()} ${browser.version()}${path ? `\uFF08${path}\uFF09` : ""}`;
@@ -545,25 +586,33 @@ async function webvpnCheck(session) {
     return { alive: false, detail: `\u6253\u4E0D\u5F00\uFF1A${String(e.message ?? e).split("\n")[0].slice(0, 80)}` };
   }
 }
-async function webvpnAlive(session) {
-  return (await webvpnCheck(session)).alive;
+async function webvpnAlive(session, opts = {}) {
+  if (!opts.fresh && session.webvpnAliveAt && Date.now() - session.webvpnAliveAt < 12e4) return true;
+  const alive = (await webvpnCheck(session)).alive;
+  session.webvpnAliveAt = alive ? Date.now() : void 0;
+  return alive;
 }
 async function ensureWebvpn(session, opts = {}) {
-  if (await webvpnAlive(session)) return;
+  if (await webvpnAlive(session, { fresh: opts.headless === false })) return;
   const page = await session.browserPage(WEBVPN_HOME);
   await page.goto(WEBVPN_CAS, { waitUntil: "domcontentloaded", timeout: 3e4 }).catch(() => void 0);
+  let onUisSince = 0;
   for (let i = 0; i < 40; i++) {
     const u = new URL(page.url());
     if (u.hostname === "webvpn.fudan.edu.cn" && !u.pathname.startsWith("/login")) break;
+    if (isUisLoginUrl(page.url())) {
+      onUisSince ||= Date.now();
+      if (Date.now() - onUisSince > 4e3) break;
+    } else onUisSince = 0;
     await new Promise((r) => setTimeout(r, 500));
   }
-  if (await webvpnAlive(session)) return;
+  if (await webvpnAlive(session, { fresh: true })) return;
   if (opts.headless === false) {
     await session.withPage(WEBVPN_CAS, async (p) => {
       const u = new URL(p.url());
       return u.hostname === "webvpn.fudan.edu.cn" && !u.pathname.startsWith("/login");
     }, { headless: false, timeoutMs: 3e5, stuckOnUisMs: 6e3 });
-    if (await webvpnAlive(session)) return;
+    if (await webvpnAlive(session, { fresh: true })) return;
   }
   const check = await webvpnCheck(session);
   throw new FduError("NEED_LOGIN", `\u6CA1\u80FD\u5EFA\u7ACB WebVPN \u4F1A\u8BDD\uFF08\u68C0\u67E5\u65F6\u505C\u5728 ${check.detail}\uFF09\u3002`, "\u8FD0\u884C `fdu login --webvpn`\uFF0C\u5728\u6D4F\u89C8\u5668\u91CC\u5B8C\u6210\u767B\u5F55\uFF1B\u8FD8\u662F\u4E0D\u884C\u8BF7\u628A\u8FD9\u6761\u4FE1\u606F\u53D1\u7ED9\u5F00\u53D1\u8005\u3002", { op: "auth.login", args: { webvpn: true } });
@@ -2717,17 +2766,20 @@ async function runDoctor(d) {
   try {
     checks.push({ name: "\u6D4F\u89C8\u5668", status: "ok", detail: await d.browser() });
   } catch (e) {
-    checks.push({ name: "\u6D4F\u89C8\u5668", status: "fail", detail: `\u6CA1\u6709\u627E\u5230\u53EF\u7528\u7684\u6D4F\u89C8\u5668\uFF1A${String(e.message ?? e).split("\n")[0].slice(0, 160)}`, fix: "\u5B89\u88C5 Chrome \u6216 Edge\uFF1B\u6216\u8005\u8BBE\u7F6E FDU_BROWSER \u4E3A Chromium \u5185\u6838\u6D4F\u89C8\u5668\u7684\u8DEF\u5F84\uFF1B\u6216\u8005\u8FD0\u884C npx playwright install chromium" });
+    const err = e;
+    checks.push({ name: "\u6D4F\u89C8\u5668", status: "fail", detail: String(err.message ?? e).split("\n")[0].slice(0, 600), fix: err.hint ?? "\u5B89\u88C5 Chrome \u6216 Edge\uFF1B\u6216\u8005\u8BBE\u7F6E FDU_BROWSER \u4E3A Chromium \u5185\u6838\u6D4F\u89C8\u5668\u7684\u8DEF\u5F84\uFF1B\u6216\u8005\u8FD0\u884C npx playwright install chromium" });
   }
   if (d.proxy) checks.push({ name: "\u4EE3\u7406", status: "ok", detail: `\u4F7F\u7528\u4EE3\u7406 ${d.proxy.replace(/\/\/[^@/]*@/, "//***@")}` });
   const clean3 = (e) => String(e.message ?? e).replace(/^apiRequestContext\.\w+:\s*/, "").split("\n")[0].slice(0, 120);
+  const secs = (since) => `${((Date.now() - since) / 1e3).toFixed(1)} \u79D2`;
   const reach = await Promise.all(HOSTS.map(async (h) => {
+    const started = Date.now();
     try {
       const r = await d.reach(h.url);
       const level = r.status >= 200 && r.status < 400 ? "ok" : r.status >= 400 && r.status < 500 ? "warn" : h.required ? "fail" : "warn";
-      return { h, level, detail: `HTTP ${r.status}${r.status === 403 ? "\uFF08\u88AB\u62D2\u7EDD\u8BBF\u95EE\uFF0C\u68C0\u67E5\u4EE3\u7406\u6216\u7F51\u7EDC\u9650\u5236\uFF09" : ""}` };
+      return { h, level, detail: `HTTP ${r.status}\uFF0C${secs(started)}${r.status === 403 ? "\uFF08\u88AB\u62D2\u7EDD\u8BBF\u95EE\uFF0C\u68C0\u67E5\u4EE3\u7406\u6216\u7F51\u7EDC\u9650\u5236\uFF09" : ""}` };
     } catch (e) {
-      return { h, level: h.required ? "fail" : "warn", detail: `\u8FDE\u4E0D\u4E0A\uFF1A${clean3(e)}` };
+      return { h, level: h.required ? "fail" : "warn", detail: `\u8FDE\u4E0D\u4E0A\uFF08${secs(started)}\uFF09\uFF1A${clean3(e)}` };
     }
   }));
   for (const { h, level, detail } of reach) {
@@ -3634,7 +3686,10 @@ async function roomsDayPage(ctx, building, day) {
   await ensureWebvpn(ctx.session);
   const r = await ctx.session.browserFetch(dayPageUrl(building, day), { timeoutMs: 3e4 });
   if (/\/urp\/|authCenter|\/idp\//.test(r.url)) throw new FduError("NEED_LOGIN", "\u7A7A\u6559\u5BA4\u7CFB\u7EDF\u9700\u8981\u767B\u5F55\u3002", ROOMS_LOGIN_HINT, { op: "rooms.login" });
-  if (/webvpn\.fudan\.edu\.cn\/login/.test(r.url)) throw new FduError("NEED_LOGIN", "WebVPN \u767B\u5F55\u5DF2\u8FC7\u671F\u3002", "\u8FD0\u884C `fdu login --webvpn`\u3002", { op: "auth.login", args: { webvpn: true } });
+  if (/webvpn\.fudan\.edu\.cn\/login/.test(r.url)) {
+    ctx.session.webvpnAliveAt = void 0;
+    throw new FduError("NEED_LOGIN", "WebVPN \u767B\u5F55\u5DF2\u8FC7\u671F\u3002", "\u8FD0\u884C `fdu login --webvpn`\u3002", { op: "auth.login", args: { webvpn: true } });
+  }
   return parseDayPage(r.text);
 }
 function buildingList(value, max = 6) {
@@ -3660,9 +3715,10 @@ var OPS = [
   // ======================= 账号 =======================
   op({
     name: "auth.login",
-    summary: "\u767B\u5F55\u590D\u65E6\u7EDF\u4E00\u8EAB\u4EFD\u8BA4\u8BC1\uFF1A\u6253\u5F00\u6D4F\u89C8\u5668\uFF0C\u4F60\u81EA\u5DF1\u8F93\u5165\u8D26\u53F7\u5BC6\u7801\u3001\u5B8C\u6210\u4E8C\u6B21\u9A8C\u8BC1\uFF1B\u4E4B\u540E eLearning\u3001\u6559\u52A1\u3001\u6821\u56ED\u5361\u7B49\u5171\u7528\u8FD9\u4E2A\u767B\u5F55\u3002",
+    summary: "\u767B\u5F55\u590D\u65E6\u7EDF\u4E00\u8EAB\u4EFD\u8BA4\u8BC1\uFF1A\u6253\u5F00\u6D4F\u89C8\u5668\uFF0C\u4F60\u81EA\u5DF1\u8F93\u5165\u8D26\u53F7\u5BC6\u7801\u3001\u5B8C\u6210\u4E8C\u6B21\u9A8C\u8BC1\uFF1B\u4E4B\u540E eLearning\u3001\u6559\u52A1\u3001\u6821\u56ED\u5361\u7B49\u5171\u7528\u8FD9\u4E2A\u767B\u5F55\u3002MCP \u91CC\u6700\u591A\u7B49 50 \u79D2\uFF1A\u7528\u6237\u8FD8\u6CA1\u5B8C\u6210\u65F6\u8FD4\u56DE pending\uFF0C\u7A97\u53E3\u4FDD\u6301\u6253\u5F00\uFF0C\u5B8C\u6210\u540E\u7528 auth_status \u786E\u8BA4\u3002",
     login: "none",
     effect: "auth",
+    mcpOmit: ["force"],
     params: {
       webvpn: flag("\u987A\u4FBF\u5EFA\u7ACB WebVPN \u4F1A\u8BDD\uFF08\u6821\u5916\u8BBF\u95EE\u6811\u6D1E\u9700\u8981\uFF09"),
       force: flag("\u4E22\u5F03\u5DF2\u6709\u767B\u5F55\u72B6\u6001\uFF0C\u91CD\u65B0\u767B\u5F55"),
@@ -3670,6 +3726,19 @@ var OPS = [
     },
     examples: ["fdu login", "fdu login --webvpn", "fdu login --url https://my.fudan.edu.cn/simple_list/stqk"],
     async run(ctx, a) {
+      if (ctx.waitMs) {
+        const r2 = await runLoginTask(ctx, async () => {
+          if (a.url) {
+            if (!ctx.session.hasState()) await login(ctx.session, { onWaiting: ctx.log });
+            return loginAt(ctx.session, { url: a.url }, { onWaiting: ctx.log });
+          }
+          await login(ctx.session, { webvpn: a.webvpn, onWaiting: ctx.log });
+          return true;
+        });
+        if (r2 === "pending") return { pending: true, message: "\u5DF2\u5728\u7528\u6237\u7535\u8111\u4E0A\u6253\u5F00\u767B\u5F55\u7A97\u53E3\uFF0C\u7B49\u7528\u6237\u5B8C\u6210\u767B\u5F55\u6216\u9A8C\u8BC1\uFF08\u7A97\u53E3\u4FDD\u6301\u6253\u5F00\uFF09\u3002\u5B8C\u6210\u540E\u8C03\u7528 auth_status \u786E\u8BA4\uFF0C\u6216\u76F4\u63A5\u91CD\u8BD5\u521A\u624D\u7684\u67E5\u8BE2\u3002" };
+        if (!r2) throw new FduError("NEED_LOGIN", "\u6CA1\u6709\u5B8C\u6210\u767B\u5F55\u3002", "\u8BF7\u7528\u6237\u5728\u7EC8\u7AEF\u8FD0\u884C `fdu login`\u3002");
+        return { loggedIn: true, stateFile: ctx.store.path("state.json") };
+      }
       if (a.force) ctx.session.clear();
       if (a.url) {
         if (!ctx.session.hasState()) await login(ctx.session, { onWaiting: ctx.log });
@@ -3733,7 +3802,7 @@ var OPS = [
         },
         browser: () => ctx.session.probeBrowser(),
         reach: async (url) => {
-          const r = await ctx.session.raw(url, { timeoutMs: 1e4 });
+          const r = await ctx.session.raw(url, { timeoutMs: 3e4, retries: 1 });
           return { status: r.status, url: r.url };
         },
         login: async () => {
@@ -4690,6 +4759,21 @@ function findOp(name) {
   return OPS.find((o) => o.name === name);
 }
 var RELOGIN_LOCKS = /* @__PURE__ */ new WeakMap();
+function runLoginTask(ctx, attempt) {
+  let task = RELOGIN_LOCKS.get(ctx.session);
+  if (!task) {
+    const p = attempt().catch(() => false).finally(() => {
+      if (RELOGIN_LOCKS.get(ctx.session) === p) RELOGIN_LOCKS.delete(ctx.session);
+    });
+    RELOGIN_LOCKS.set(ctx.session, p);
+    task = p;
+  }
+  if (!ctx.waitMs) return task;
+  let timer;
+  return Promise.race([task, new Promise((r) => {
+    timer = setTimeout(() => r("pending"), ctx.waitMs);
+  })]).finally(() => clearTimeout(timer));
+}
 function autoLogin(ctx, e) {
   if (process.env.FDU_AUTO_LOGIN === "0") return Promise.resolve(false);
   const timeoutMs = (Number(process.env.FDU_LOGIN_WAIT) || 180) * 1e3;
@@ -4709,11 +4793,7 @@ function autoLogin(ctx, e) {
     };
   }
   if (!attempt) return Promise.resolve(false);
-  const running = RELOGIN_LOCKS.get(ctx.session);
-  if (running) return running;
-  const p = attempt().catch(() => false).finally(() => RELOGIN_LOCKS.delete(ctx.session));
-  RELOGIN_LOCKS.set(ctx.session, p);
-  return p;
+  return runLoginTask(ctx, attempt);
 }
 
 // src/run.ts
@@ -4740,7 +4820,10 @@ async function runOp(op2, ctx, input, opts = {}) {
     try {
       data = await op2.run(ctx, args);
     } catch (e) {
-      if (op2.effect === "auth" || !ctx.relogin || !await ctx.relogin(e)) throw e;
+      if (op2.effect === "auth" || !ctx.relogin) throw e;
+      const relogged = await ctx.relogin(e);
+      if (relogged === "pending") throw new FduError("NEED_LOGIN", "\u5DF2\u5728\u7528\u6237\u7535\u8111\u4E0A\u6253\u5F00\u767B\u5F55\u7A97\u53E3\uFF0C\u6B63\u5728\u7B49\u7528\u6237\u5B8C\u6210\u767B\u5F55\u6216\u9A8C\u8BC1\u3002", "\u8BF7\u7528\u6237\u5728\u5F39\u51FA\u7684\u7A97\u53E3\u91CC\u5B8C\u6210\uFF08\u7A97\u53E3\u4F1A\u4FDD\u6301\u6253\u5F00\uFF09\uFF0C\u5B8C\u6210\u540E\u518D\u67E5\u8BE2\u4E00\u6B21\u5373\u53EF\u3002");
+      if (!relogged) throw e;
       data = await op2.run(ctx, args);
     }
     if (useCache) {
@@ -4799,8 +4882,9 @@ var LOGIN_NOTE = {
   none: ""
 };
 function mcpShape(op2) {
-  return Object.fromEntries(Object.entries(op2.params).map(([k, v]) => [k, FLAGS.has(v) ? z3.boolean().optional().describe(v.description ?? "") : v]));
+  return Object.fromEntries(Object.entries(op2.params).filter(([k]) => !op2.mcpOmit?.includes(k)).map(([k, v]) => [k, FLAGS.has(v) ? z3.boolean().optional().describe(v.description ?? "") : v]));
 }
+var MCP_LOGIN_WAIT_MS = (Number(process.env.FDU_MCP_LOGIN_WAIT) || 50) * 1e3;
 function toolDescription(op2) {
   return [
     op2.summary,
@@ -4811,6 +4895,12 @@ function toolDescription(op2) {
 }
 function buildServer(session, store) {
   const server = new McpServer({ name: "fudan", version: VERSION });
+  let queue = Promise.resolve();
+  const serial = (fn) => {
+    const next = queue.then(fn, fn);
+    queue = next.catch(() => void 0);
+    return next;
+  };
   for (const op2 of OPS) {
     if (op2.mcp === false) continue;
     server.registerTool(op2.name.replace(".", "_"), {
@@ -4819,9 +4909,12 @@ function buildServer(session, store) {
       annotations: { readOnlyHint: op2.effect === "read", destructiveHint: false, openWorldHint: true }
     }, async (args) => {
       const ctx = { store, session, log: (m) => process.stderr.write(`${m}
-`), cwd: process.cwd(), now: () => Date.now(), cache: new Cache(store), relogin: (e) => autoLogin(ctx, e) };
-      const result = await runOp(op2, ctx, args ?? {});
-      await session.release();
+`), cwd: process.cwd(), now: () => Date.now(), cache: new Cache(store), relogin: (e) => autoLogin(ctx, e), waitMs: MCP_LOGIN_WAIT_MS };
+      const result = await serial(async () => {
+        const r = await runOp(op2, ctx, args ?? {});
+        await session.release();
+        return r;
+      });
       return {
         // 失败但有上次的结果时一并返回，并写明是什么时候的
         content: [{ type: "text", text: JSON.stringify(result.ok ? result.data : { ...result.error, ...result.cached ? { cached: result.cached } : {} }, null, 1) }],
