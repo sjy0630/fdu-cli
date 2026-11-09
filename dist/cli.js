@@ -58,6 +58,7 @@ var FduError = class extends Error {
 function redact(s) {
   return s.replace(/([\w-]*(?:token|csrf|session|cookie|ticket|auth|key|sid)[\w-]*)=([^;\s"',&]+)/gi, "$1=***").replace(/[A-Za-z0-9%+/_-]{32,}={0,2}/g, "***");
 }
+var PARSE_HINT = "\u8FD9\u4E0D\u662F\u7F51\u7EDC\u95EE\u9898\u3002\u8BF7\u5230 https://github.com/sjy0630/fdu-cli/issues \u53CD\u9988\uFF08\u9644\u4E0A\u8FD9\u6761\u4FE1\u606F\uFF09\uFF1B\u6709\u8D26\u53F7\u7684\u8BDD\u53EF\u4EE5\u8FD0\u884C `fdu dev capture --url <\u9875\u9762>` \u5F55\u4E0B\u63A5\u53E3\u7ED3\u6784\u4E00\u8D77\u53D1\u6765\u3002";
 function toFduError(e) {
   if (e instanceof FduError) return e;
   if (e instanceof NeedLoginError) {
@@ -66,10 +67,13 @@ function toFduError(e) {
   const err = e;
   const message = redact(String(err?.message ?? e).replace(/\u001b\[[0-9;]*m/g, "").split(/\nCall log:|\n/)[0].replace(/^apiRequestContext\.\w+:\s*/, ""));
   if (err?.name === "TreeholeLoginError") return new FduError("NEED_HOLE_LOGIN", "\u9700\u8981\u767B\u5F55\u6811\u6D1E\u8D26\u53F7\u3002", "\u8FD0\u884C `fdu hole login --email \u5B66\u53F7@m.fudan.edu.cn`\uFF08\u5BC6\u7801\u53EA\u7528\u6765\u6362\u53D6\u4EE4\u724C\uFF0C\u4E0D\u4FDD\u5B58\uFF09\u3002");
-  if (err?.name === "TimetableFormatError") return new FduError("FORMAT_CHANGED", message);
+  if (err?.name === "TimetableFormatError") return new FduError("FORMAT_CHANGED", message, PARSE_HINT);
   if (err?.status === 403) return new FduError("PERMISSION", message);
-  if (/timeout|timed out|ECONN|ENOTFOUND|EAI_AGAIN|net::/i.test(message)) {
+  if (/timeout|timed out|ECONN|ENOTFOUND|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|socket hang up|fetch failed|net::/i.test(message)) {
     return new FduError("UPSTREAM", `\u8FDE\u4E0D\u4E0A\u5B66\u6821\u7CFB\u7EDF\uFF1A${message.slice(0, 160)}`, "\u68C0\u67E5\u7F51\u7EDC\uFF1B\u90E8\u5206\u7CFB\u7EDF\u53EA\u5141\u8BB8\u6821\u56ED\u7F51\u8BBF\u95EE\uFF0C\u6821\u5916\u8BF7\u5148\u8FDE\u5B66\u6821 VPN\u3002");
+  }
+  if (e instanceof TypeError || e instanceof SyntaxError || e instanceof RangeError || /格式和预期不同|页面可能更新了|没有找到.*(入口|数据|表格)|Unexpected token|is not valid JSON|JSON\.parse/i.test(message)) {
+    return new FduError("FORMAT_CHANGED", `\u5B66\u6821\u7CFB\u7EDF\u8FD4\u56DE\u7684\u5185\u5BB9\u548C\u9884\u671F\u4E0D\u540C\uFF08\u53EF\u80FD\u662F\u9875\u9762\u6539\u7248\u4E86\uFF09\uFF1A${message.slice(0, 200)}`, PARSE_HINT);
   }
   return new FduError("UPSTREAM", message.slice(0, 400));
 }
@@ -470,8 +474,10 @@ var Store = class {
 
 // src/core/cache.ts
 import { createHash } from "node:crypto";
-import { readdirSync, rmSync as rmSync2 } from "node:fs";
+import { readdirSync, rmSync as rmSync2, statSync } from "node:fs";
 var DIR = "cache";
+var MAX_FILES = 200;
+var MAX_AGE = 7 * 24 * 36e5;
 function cacheKey(op2, args) {
   const sorted = Object.fromEntries(Object.entries(args).filter(([, v]) => v !== void 0).sort(([a], [b]) => a.localeCompare(b)));
   return createHash("sha1").update(`${op2}
@@ -482,12 +488,33 @@ var Cache = class {
     this.store = store;
   }
   store;
-  get(op2, args) {
-    const e = this.store.readJson(`${DIR}/${cacheKey(op2, args)}.json`);
-    return e && e.op === op2 ? e : null;
+  /** 读缓存；超过 ttlMs 的当作没有，并顺手删掉 */
+  get(op2, args, ttlMs = MAX_AGE, now = Date.now()) {
+    const name = `${DIR}/${cacheKey(op2, args)}.json`;
+    const e = this.store.readJson(name);
+    if (!e || e.op !== op2) return null;
+    if (!(now - Date.parse(e.at) <= ttlMs)) {
+      this.store.remove(name);
+      return null;
+    }
+    return e;
   }
   set(op2, args, data, now = Date.now()) {
     this.store.writeJson(`${DIR}/${cacheKey(op2, args)}.json`, { op: op2, args, at: new Date(now).toISOString(), data });
+    this.prune(now);
+  }
+  /** 删掉超过 7 天的；超过上限时从最旧的删起 */
+  prune(now = Date.now()) {
+    let files;
+    try {
+      files = readdirSync(this.store.path(DIR)).filter((f) => f.endsWith(".json")).map((f) => ({ f, t: statSync(this.store.path(`${DIR}/${f}`)).mtimeMs }));
+    } catch {
+      return;
+    }
+    files.sort((a, b) => b.t - a.t);
+    files.forEach(({ f, t }, i) => {
+      if (i >= MAX_FILES || now - t > MAX_AGE) rmSync2(this.store.path(`${DIR}/${f}`), { force: true });
+    });
   }
   clear() {
     let n = 0;
@@ -510,7 +537,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z as z3 } from "zod";
 
 // src/ops.ts
-import { accessSync, constants as fsConstants, existsSync as existsSync2, mkdirSync as mkdirSync2, statSync, writeFileSync as writeFileSync2 } from "node:fs";
+import { accessSync, constants as fsConstants, existsSync as existsSync2, mkdirSync as mkdirSync2, statSync as statSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { basename, dirname as dirname2, extname, join as join2, resolve } from "node:path";
 import { z } from "zod";
 
@@ -2763,6 +2790,15 @@ async function runDoctor(d) {
   if (!dir.writable) checks.push({ name: "\u914D\u7F6E\u76EE\u5F55", status: "fail", detail: `${d.configDir} \u4E0D\u80FD\u5199\u5165`, fix: "\u68C0\u67E5\u8FD9\u4E2A\u76EE\u5F55\u7684\u6743\u9650\uFF0C\u6216\u7528\u73AF\u5883\u53D8\u91CF FDU_HOME \u6362\u4E00\u4E2A\u4F4D\u7F6E" });
   else if (d.platform !== "win32" && dir.mode !== void 0 && dir.mode & 63) checks.push({ name: "\u914D\u7F6E\u76EE\u5F55", status: "warn", detail: `${d.configDir} \u5176\u4ED6\u7528\u6237\u4E5F\u80FD\u8BBF\u95EE\uFF08\u6743\u9650 ${(dir.mode & 511).toString(8)}\uFF09`, fix: `\u8FD0\u884C chmod 700 "${d.configDir}"` });
   else checks.push({ name: "\u914D\u7F6E\u76EE\u5F55", status: "ok", detail: d.configDir });
+  if (d.platform !== "win32") {
+    const open = (d.secretFiles?.() ?? []).filter((f) => f.mode & 63);
+    if (open.length) checks.push({
+      name: "\u767B\u5F55\u6587\u4EF6\u6743\u9650",
+      status: "warn",
+      detail: `${open.map((f) => `${f.name}\uFF08${(f.mode & 511).toString(8)}\uFF09`).join("\u3001")} \u5176\u4ED6\u7528\u6237\u4E5F\u80FD\u8BFB\uFF08\u91CC\u9762\u6709\u767B\u5F55\u72B6\u6001${open.some((f) => f.name === "mail.json") ? "\u548C\u90AE\u7BB1\u5BA2\u6237\u7AEF\u4E13\u7528\u5BC6\u7801" : ""}\uFF09`,
+      fix: `\u8FD0\u884C chmod 600 ${open.map((f) => `"${d.configDir}/${f.name}"`).join(" ")}`
+    });
+  }
   try {
     checks.push({ name: "\u6D4F\u89C8\u5668", status: "ok", detail: await d.browser() });
   } catch (e) {
@@ -3711,6 +3747,7 @@ var needPrompt = (ctx) => {
   if (!ctx.prompt) throw new FduError("BAD_ARGS", "\u8FD9\u4E2A\u64CD\u4F5C\u9700\u8981\u5728\u7EC8\u7AEF\u91CC\u8F93\u5165\u5BC6\u7801\uFF0C\u8BF7\u76F4\u63A5\u5728\u7EC8\u7AEF\u8FD0\u884C\u3002");
   return ctx.prompt;
 };
+var REALTIME_TTL = 30 * 6e4;
 var OPS = [
   // ======================= 账号 =======================
   op({
@@ -3795,11 +3832,18 @@ var OPS = [
           try {
             mkdirSync2(ctx.store.dir, { recursive: true, mode: 448 });
             accessSync(ctx.store.dir, fsConstants.W_OK);
-            return { writable: true, mode: statSync(ctx.store.dir).mode };
+            return { writable: true, mode: statSync2(ctx.store.dir).mode };
           } catch {
             return { writable: false };
           }
         },
+        secretFiles: () => ["state.json", "mail.json", "hole.json", "library.json"].flatMap((name) => {
+          try {
+            return [{ name, mode: statSync2(ctx.store.path(name)).mode }];
+          } catch {
+            return [];
+          }
+        }),
         browser: () => ctx.session.probeBrowser(),
         reach: async (url) => {
           const r = await ctx.session.raw(url, { timeoutMs: 3e4, retries: 1 });
@@ -4280,6 +4324,7 @@ var OPS = [
     summary: "\u6821\u56ED\u5361\u4F59\u989D\u3002",
     login: "uis",
     effect: "read",
+    cacheTtl: REALTIME_TTL,
     params: {},
     async run(ctx) {
       return { balance: await readCardBalance(ctx.session.reader("jwfw")), at: new Date(ctx.now()).toISOString() };
@@ -4328,6 +4373,7 @@ var OPS = [
     summary: "\u4F53\u80B2\u573A\u9986\u7684\u7A7A\u95F2\u65F6\u6BB5\uFF1A\u6BCF\u4E2A\u65F6\u6BB5\u8FD8\u6709\u54EA\u4E9B\u573A\u5730\u7A7A\u7740\uFF08\u53EA\u770B\uFF0C\u4E0D\u9884\u7EA6\uFF09\u3002\u573A\u9986\u53EF\u4EE5\u5199 id \u6216\u540D\u79F0\u5173\u952E\u8BCD\uFF08\u5982\u300C\u5317\u533A \u7FBD\u6BDB\u7403\u300D\uFF09\u3002",
     login: "uis",
     effect: "read",
+    cacheTtl: REALTIME_TTL,
     params: {
       venue: z.string().min(1).describe("\u573A\u9986 id \u6216\u540D\u79F0\u5173\u952E\u8BCD\uFF0C\u591A\u4E2A\u8BCD\u7528\u7A7A\u683C\u5206\u5F00"),
       date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("\u65E5\u671F YYYY-MM-DD\uFF0C\u9ED8\u8BA4\u4ECA\u5929"),
@@ -4356,6 +4402,7 @@ var OPS = [
     summary: "\u5404\u98DF\u5802\u73B0\u5728\u7684\u5C31\u9910\u4EBA\u6570\u548C\u5BB9\u91CF\uFF08ratio = \u4EBA\u6570 / \u5BB9\u91CF\uFF09\u3002\u4E0D\u5728\u7528\u9910\u65F6\u6BB5\u65F6 open \u4E3A false\uFF0C\u5E76\u9644\u4E0A\u5B66\u6821\u9875\u9762\u7684\u8BF4\u660E\u3002",
     login: "uis",
     effect: "read",
+    cacheTtl: REALTIME_TTL,
     params: { campus: z.string().optional().describe("\u53EA\u770B\u67D0\u4E2A\u6821\u533A\uFF1A\u90AF\u90F8\u3001\u67AB\u6797\u3001\u6C5F\u6E7E\u3001\u5F20\u6C5F") },
     examples: ["fdu canteen crowd", "fdu canteen crowd --campus \u90AF\u90F8"],
     async run(ctx, a) {
@@ -4385,6 +4432,7 @@ var OPS = [
     summary: "\u5BBF\u820D\u5269\u4F59\u7535\u91CF\uFF08\u5EA6\uFF09\u3002",
     login: "uis",
     effect: "read",
+    cacheTtl: REALTIME_TTL,
     params: {},
     async run(ctx) {
       return readElectricity(ctx.session.reader("jwfw"));
@@ -4395,6 +4443,7 @@ var OPS = [
     summary: "\u5404\u56FE\u4E66\u9986\u5728\u9986\u4EBA\u6570\u548C\u8FD8\u80FD\u8FDB\u591A\u5C11\u4EBA\uFF08\u516C\u5F00\u63A5\u53E3\uFF0C\u4E0D\u7528\u767B\u5F55\uFF09\u3002",
     login: "none",
     effect: "read",
+    cacheTtl: REALTIME_TTL,
     params: {},
     async run(ctx) {
       return readLibrary(async (url) => {
@@ -4427,6 +4476,7 @@ var OPS = [
     summary: "\u7A7A\u6559\u5BA4\uFF1A\u67D0\u680B\u697C\u67D0\u5929\u67D0\u51E0\u8282\u90FD\u7A7A\u7740\u7684\u6559\u5BA4\uFF08\u6309\u5EA7\u4F4D\u4ECE\u591A\u5230\u5C11\uFF09\uFF0C\u4EE5\u53CA\u7A7A\u5230\u4EC0\u4E48\u65F6\u5019\u3002\u9ED8\u8BA4\u4ECA\u5929\u3001\u4ECE\u73B0\u5728\u8FD9\u8282\u8D77\u4E24\u8282\u3002\u6570\u636E\u6765\u81EA\u5B66\u6821\u591A\u5A92\u4F53\u6559\u5BA4\u7CFB\u7EDF\u7684\u5728\u7EBF\u8BFE\u8868\u3002",
     login: "uis",
     effect: "read",
+    cacheTtl: REALTIME_TTL,
     params: {
       building: z.string().min(1).describe(`\u6559\u5B66\u697C\u4EE3\u7801\uFF0C\u591A\u4E2A\u7528\u9017\u53F7\u5206\u5F00\uFF1A${BUILDINGS.join("\u3001")}\uFF08H2 = \u4E8C\u6559\uFF0CHGX = \u5149\u534E\u697C\uFF09`),
       date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("\u65E5\u671F YYYY-MM-DD\uFF0C\u9ED8\u8BA4\u4ECA\u5929"),
@@ -4438,20 +4488,18 @@ var OPS = [
     async run(ctx, a) {
       const today = shanghaiDay(ctx.now());
       const day = a.date ?? today;
-      const out = [];
-      for (const b of buildingList(a.building)) {
+      if (a.from !== void 0 && a.to !== void 0 && a.to < a.from) throw new FduError("BAD_ARGS", "--to \u4E0D\u80FD\u5C0F\u4E8E --from\u3002");
+      if (ctx.session.hasState()) await ensureWebvpn(ctx.session);
+      const out = await pool(buildingList(a.building), 3, async (b) => {
         const page = await roomsDayPage(ctx, b, day);
         const nowHm = new Date(ctx.now() + 8 * 36e5).toISOString().slice(11, 16);
         const from = a.from ?? (day === today ? periodAt(page.periods, nowHm) : 1);
-        if (from === void 0) {
-          out.push({ building: b, note: "\u4ECA\u5929\u7684\u8BFE\u90FD\u4E0A\u5B8C\u4E86\uFF08\u7B2C\u5341\u56DB\u8282\u5DF2\u8FC7\uFF09\u3002" });
-          continue;
-        }
+        if (from === void 0) return { building: b, note: "\u4ECA\u5929\u7684\u8BFE\u90FD\u4E0A\u5B8C\u4E86\uFF08\u7B2C\u5341\u56DB\u8282\u5DF2\u8FC7\uFF09\u3002" };
         const to = Math.min(a.to ?? (a.from === void 0 && day !== today ? 14 : from + 1), page.periods.length);
-        if (to < from) throw new FduError("BAD_ARGS", "--to \u4E0D\u80FD\u5C0F\u4E8E --from\u3002");
+        if (to < from) throw new FduError("BAD_ARGS", "--to \u4E0D\u80FD\u5C0F\u4E8E --from\uFF08\u4E0D\u586B --from \u65F6\u4ECE\u73B0\u5728\u8FD9\u8282\u7B97\u8D77\uFF09\u3002");
         const free = freeRooms(page, from, to, { minCapacity: a.minSeats });
-        out.push({ building: b, date: page.date ?? day, week: page.week, periods: `\u7B2C ${from === to ? from : `${from}\u2013${to}`} \u8282\uFF08${periodSpan(page.periods, from, to)}\uFF09`, freeCount: free.length, free });
-      }
+        return { building: b, date: page.date ?? day, week: page.week, periods: `\u7B2C ${from === to ? from : `${from}\u2013${to}`} \u8282\uFF08${periodSpan(page.periods, from, to)}\uFF09`, freeCount: free.length, free };
+      });
       return { results: out, note: "\u300C\u4E0D\u5F00\u653E\u81EA\u4FEE\u300D\u7B49\u6807\u6CE8\u4E5F\u7B97\u5360\u7528\uFF1B\u4E34\u65F6\u501F\u7528\u4EE5\u5B66\u6821\u7CFB\u7EDF\u4E3A\u51C6\u3002" };
     }
   }),
@@ -4460,6 +4508,7 @@ var OPS = [
     summary: "\u6559\u5BA4\u7684\u5B8C\u6574\u4FE1\u606F\uFF08\u7ED9 AI \u5224\u65AD\u7528\uFF09\uFF1A\u6BCF\u680B\u697C\u7684\u6C47\u603B\uFF08\u6309\u697C\u5C42\u7684\u6559\u5BA4\u6570\u3001\u5EA7\u4F4D\uFF0C\u67E5\u4ECA\u5929\u65F6\u8FD8\u6709\u73B0\u5728\u7A7A\u7740 / \u5728\u7528\u51E0\u95F4\uFF09\uFF0C\u6BCF\u95F4\u6559\u5BA4\u7684\u697C\u5C42\u3001\u5EA7\u4F4D\u3001\u5168\u5929\u6BCF\u6BB5\u5B89\u6392\uFF08\u8282\u6B21\u3001\u65F6\u95F4\u3001\u8BFE\u7A0B\u4EE3\u7801\u3001\u8BFE\u540D\u3001\u8001\u5E08\u3001\u4EBA\u6570\u3001\u4E34\u501F\u6D3B\u52A8\u7B49\uFF09\u3001\u7A7A\u95F2\u65F6\u6BB5\uFF1B\u67E5\u4ECA\u5929\u65F6\u9644\u4E0A\u73B0\u5728\u7684\u72B6\u6001\uFF08\u7A7A\u5230\u51E0\u70B9\uFF0C\u6216\u5728\u4E0A\u4EC0\u4E48\u3001\u5230\u51E0\u70B9\uFF09\u3002\u4E0D\u6307\u5B9A\u697C\u65F6\u67E5\u5168\u90E8\u6559\u5B66\u697C\uFF08\u6570\u636E\u8F83\u591A\uFF09\u3002",
     login: "uis",
     effect: "read",
+    cacheTtl: REALTIME_TTL,
     params: {
       building: z.string().optional().describe(`\u6559\u5B66\u697C\u4EE3\u7801\uFF0C\u591A\u4E2A\u7528\u9017\u53F7\u5206\u5F00\uFF1A${BUILDINGS.join("\u3001")}\uFF08H2 = \u4E8C\u6559\uFF0CHGX = \u5149\u534E\u697C\uFF09\uFF1B\u4E0D\u586B\u67E5\u5168\u90E8`),
       date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("\u65E5\u671F YYYY-MM-DD\uFF0C\u9ED8\u8BA4\u4ECA\u5929"),
@@ -4472,20 +4521,22 @@ var OPS = [
       const day = a.date ?? today;
       const list2 = a.building ? buildingList(a.building, 12) : BUILDINGS;
       const nowHm = day === today ? new Date(ctx.now() + 8 * 36e5).toISOString().slice(11, 16) : void 0;
-      const results = [];
       const errors = {};
       let periods;
-      for (const b of list2) {
+      if (ctx.session.hasState()) await ensureWebvpn(ctx.session);
+      const pages = await pool(list2, 3, async (b) => {
         try {
           const page = await roomsDayPage(ctx, b, day);
           periods ??= page.periods;
           const report = roomsReport(b, page, { nowHm, room: a.room });
-          results.push(a.brief ? { ...report, rooms: report.rooms.map(({ schedule: _s, ...rest }) => rest) } : report);
+          return a.brief ? { ...report, rooms: report.rooms.map(({ schedule: _s, ...rest }) => rest) } : report;
         } catch (e) {
           if (e instanceof FduError && e.code.startsWith("NEED_")) throw e;
           errors[b] = e.message;
+          return void 0;
         }
-      }
+      });
+      const results = pages.filter((r) => !!r);
       const buildings = a.room ? results.filter((r) => r.rooms.length) : results;
       if (a.room && !buildings.length) throw new FduError("NOT_FOUND", `\u6CA1\u6709\u627E\u5230\u6559\u5BA4 ${a.room}\u3002`, "\u68C0\u67E5\u6559\u5BA4\u53F7\uFF0C\u6216\u8005\u7528 --building \u6307\u5B9A\u697C\u3002");
       return {
@@ -4799,6 +4850,7 @@ function autoLogin(ctx, e) {
 // src/run.ts
 import { z as z2 } from "zod";
 var cacheable = (op2) => op2.effect === "read" && op2.cache !== false;
+var cacheTtl = (op2) => op2.cacheTtl ?? (op2.sensitive ? 24 * 36e5 : 7 * 24 * 36e5);
 var camel = (s) => s.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
 var kebab = (s) => s.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
 async function runOp(op2, ctx, input, opts = {}) {
@@ -4812,8 +4864,8 @@ async function runOp(op2, ctx, input, opts = {}) {
     args = parsed.data;
     const useCache = !!ctx.cache && cacheable(op2);
     if (opts.cachedOnly) {
-      const hit = useCache ? ctx.cache.get(op2.name, args) : null;
-      if (!hit) throw new FduError("NOT_FOUND", useCache ? "\u672C\u5730\u8FD8\u6CA1\u6709\u8FD9\u4E2A\u67E5\u8BE2\u7684\u7F13\u5B58\u3002" : "\u8FD9\u4E2A\u547D\u4EE4\u7684\u7ED3\u679C\u4E0D\u7F13\u5B58\u3002", "\u53BB\u6389 --cached \u8054\u7F51\u67E5\u8BE2\u4E00\u6B21\u3002");
+      const hit = useCache ? ctx.cache.get(op2.name, args, cacheTtl(op2), ctx.now()) : null;
+      if (!hit) throw new FduError("NOT_FOUND", useCache ? "\u672C\u5730\u6CA1\u6709\u8FD9\u4E2A\u67E5\u8BE2\u7684\u7F13\u5B58\uFF08\u6216\u8005\u5DF2\u7ECF\u8FC7\u671F\uFF09\u3002" : "\u8FD9\u4E2A\u547D\u4EE4\u7684\u7ED3\u679C\u4E0D\u7F13\u5B58\u3002", "\u53BB\u6389 --cached \u8054\u7F51\u67E5\u8BE2\u4E00\u6B21\u3002");
       return { ok: true, op: op2.name, data: hit.data, cachedAt: hit.at };
     }
     let data;
@@ -4835,9 +4887,10 @@ async function runOp(op2, ctx, input, opts = {}) {
     return { ok: true, op: op2.name, data };
   } catch (e) {
     const err = toFduError(e);
-    const failure = { ok: false, op: op2.name, error: { code: err.code, message: err.message, ...err.hint ? { hint: err.hint } : {} } };
+    const message = err.code === "FORMAT_CHANGED" && !err.message.includes(op2.name) ? `${err.message}\uFF08\u547D\u4EE4 ${op2.name}\uFF09` : err.message;
+    const failure = { ok: false, op: op2.name, error: { code: err.code, message, ...err.hint ? { hint: err.hint } : {} } };
     if (!opts.cachedOnly && args && ctx.cache && cacheable(op2) && (err.code.startsWith("NEED_") || err.code === "UPSTREAM")) {
-      const hit = ctx.cache.get(op2.name, args);
+      const hit = ctx.cache.get(op2.name, args, cacheTtl(op2), ctx.now());
       if (hit) failure.cached = { at: hit.at, data: hit.data };
     }
     return failure;

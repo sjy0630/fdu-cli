@@ -10,6 +10,8 @@ export interface DoctorDeps {
   configDir: string;
   /** 配置目录能不能写、权限是多少（Windows 上没有权限位） */
   configDirState(): { writable: boolean; mode?: number };
+  /** 保存登录状态、密码的文件和它们的权限位（不存在的不列） */
+  secretFiles?(): { name: string; mode: number }[];
   /** 启动一次无界面浏览器，返回浏览器名称和版本 */
   browser(): Promise<string>;
   /** 访问一个地址，返回最终地址和状态码；连不上时抛错 */
@@ -40,6 +42,14 @@ export async function runDoctor(d: DoctorDeps): Promise<{ healthy: boolean; chec
   if (!dir.writable) checks.push({ name: '配置目录', status: 'fail', detail: `${d.configDir} 不能写入`, fix: '检查这个目录的权限，或用环境变量 FDU_HOME 换一个位置' });
   else if (d.platform !== 'win32' && dir.mode !== undefined && (dir.mode & 0o077)) checks.push({ name: '配置目录', status: 'warn', detail: `${d.configDir} 其他用户也能访问（权限 ${(dir.mode & 0o777).toString(8)}）`, fix: `运行 chmod 700 "${d.configDir}"` });
   else checks.push({ name: '配置目录', status: 'ok', detail: d.configDir });
+  if (d.platform !== 'win32') {
+    const open = (d.secretFiles?.() ?? []).filter((f) => f.mode & 0o077);
+    if (open.length) checks.push({
+      name: '登录文件权限', status: 'warn',
+      detail: `${open.map((f) => `${f.name}（${(f.mode & 0o777).toString(8)}）`).join('、')} 其他用户也能读（里面有登录状态${open.some((f) => f.name === 'mail.json') ? '和邮箱客户端专用密码' : ''}）`,
+      fix: `运行 chmod 600 ${open.map((f) => `"${d.configDir}/${f.name}"`).join(' ')}`,
+    });
+  }
 
   try {
     checks.push({ name: '浏览器', status: 'ok', detail: await d.browser() });

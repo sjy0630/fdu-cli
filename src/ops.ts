@@ -76,6 +76,8 @@ export interface Op {
   examples?: string[];
   /** 只读操作默认缓存结果（--cached、失败时附带上次结果）；false 表示不缓存 */
   cache?: boolean;
+  /** 缓存保留多久（毫秒）。默认：隐私数据 24 小时，其他 7 天；实时数据（人数、空闲）单独设短 */
+  cacheTtl?: number;
   run(ctx: Ctx, args: Record<string, unknown>): Promise<unknown>;
 }
 
@@ -353,6 +355,9 @@ const needPrompt = (ctx: Ctx) => {
   return ctx.prompt;
 };
 
+/** 实时数据（人数、空闲、余额）的缓存只留 30 分钟：太旧的结果会误导 */
+const REALTIME_TTL = 30 * 60_000;
+
 export const OPS: Op[] = [
   // ======================= 账号 =======================
   op({
@@ -415,6 +420,9 @@ export const OPS: Op[] = [
             return { writable: true, mode: statSync(ctx.store.dir).mode };
           } catch { return { writable: false }; }
         },
+        secretFiles: () => ['state.json', 'mail.json', 'hole.json', 'library.json'].flatMap((name) => {
+          try { return [{ name, mode: statSync(ctx.store.path(name)).mode }]; } catch { return []; }
+        }),
         browser: () => ctx.session.probeBrowser(),
         reach: async (url) => { const r = await ctx.session.raw(url, { timeoutMs: 30_000, retries: 1 }); return { status: r.status, url: r.url }; },
         login: async () => {
@@ -775,7 +783,7 @@ export const OPS: Op[] = [
 
   // ======================= 校园生活 =======================
   op({
-    name: 'card.balance', summary: '校园卡余额。', login: 'uis', effect: 'read', params: {},
+    name: 'card.balance', summary: '校园卡余额。', login: 'uis', effect: 'read', cacheTtl: REALTIME_TTL, params: {},
     async run(ctx) { return { balance: await readCardBalance(ctx.session.reader('jwfw')), at: new Date(ctx.now()).toISOString() }; },
   }),
   op({
@@ -807,7 +815,7 @@ export const OPS: Op[] = [
     async run(ctx) { return withBooking(ctx, listVenues); },
   }),
   op({
-    name: 'venue.free', summary: '体育场馆的空闲时段：每个时段还有哪些场地空着（只看，不预约）。场馆可以写 id 或名称关键词（如「北区 羽毛球」）。', login: 'uis', effect: 'read',
+    name: 'venue.free', summary: '体育场馆的空闲时段：每个时段还有哪些场地空着（只看，不预约）。场馆可以写 id 或名称关键词（如「北区 羽毛球」）。', login: 'uis', effect: 'read', cacheTtl: REALTIME_TTL,
     params: {
       venue: z.string().min(1).describe('场馆 id 或名称关键词，多个词用空格分开'),
       date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('日期 YYYY-MM-DD，默认今天'),
@@ -833,7 +841,7 @@ export const OPS: Op[] = [
   }),
   op({
     name: 'canteen.crowd', summary: '各食堂现在的就餐人数和容量（ratio = 人数 / 容量）。不在用餐时段时 open 为 false，并附上学校页面的说明。',
-    login: 'uis', effect: 'read',
+    login: 'uis', effect: 'read', cacheTtl: REALTIME_TTL,
     params: { campus: z.string().optional().describe('只看某个校区：邯郸、枫林、江湾、张江') },
     examples: ['fdu canteen crowd', 'fdu canteen crowd --campus 邯郸'],
     async run(ctx, a) {
@@ -857,11 +865,11 @@ export const OPS: Op[] = [
     },
   }),
   op({
-    name: 'dorm.electricity', summary: '宿舍剩余电量（度）。', login: 'uis', effect: 'read', params: {},
+    name: 'dorm.electricity', summary: '宿舍剩余电量（度）。', login: 'uis', effect: 'read', cacheTtl: REALTIME_TTL, params: {},
     async run(ctx) { return readElectricity(ctx.session.reader('jwfw')); },
   }),
   op({
-    name: 'library.seats', summary: '各图书馆在馆人数和还能进多少人（公开接口，不用登录）。', login: 'none', effect: 'read', params: {},
+    name: 'library.seats', summary: '各图书馆在馆人数和还能进多少人（公开接口，不用登录）。', login: 'none', effect: 'read', cacheTtl: REALTIME_TTL, params: {},
     async run(ctx) { return readLibrary(async (url) => { const r = await ctx.session.raw(url, { method: 'POST' }); return { status: r.status, text: r.text }; }); },
   }),
   // ======================= 空教室 =======================
@@ -881,7 +889,7 @@ export const OPS: Op[] = [
   }),
   op({
     name: 'rooms.free', summary: '空教室：某栋楼某天某几节都空着的教室（按座位从多到少），以及空到什么时候。默认今天、从现在这节起两节。数据来自学校多媒体教室系统的在线课表。',
-    login: 'uis', effect: 'read',
+    login: 'uis', effect: 'read', cacheTtl: REALTIME_TTL,
     params: {
       building: z.string().min(1).describe(`教学楼代码，多个用逗号分开：${BUILDINGS.join('、')}（H2 = 二教，HGX = 光华楼）`),
       date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('日期 YYYY-MM-DD，默认今天'),
@@ -893,23 +901,24 @@ export const OPS: Op[] = [
     async run(ctx, a) {
       const today = shanghaiDay(ctx.now());
       const day = a.date ?? today;
-      const out = [];
-      for (const b of buildingList(a.building)) {
+      if (a.from !== undefined && a.to !== undefined && a.to < a.from) throw new FduError('BAD_ARGS', '--to 不能小于 --from。');
+      if (ctx.session.hasState()) await ensureWebvpn(ctx.session);
+      const out = await pool(buildingList(a.building), 3, async (b) => {
         const page = await roomsDayPage(ctx, b, day);
         const nowHm = new Date(ctx.now() + 8 * 3_600_000).toISOString().slice(11, 16);
         const from = a.from ?? (day === today ? periodAt(page.periods, nowHm) : 1);
-        if (from === undefined) { out.push({ building: b, note: '今天的课都上完了（第十四节已过）。' }); continue; }
+        if (from === undefined) return { building: b, note: '今天的课都上完了（第十四节已过）。' };
         const to = Math.min(a.to ?? (a.from === undefined && day !== today ? 14 : from + 1), page.periods.length);
-        if (to < from) throw new FduError('BAD_ARGS', '--to 不能小于 --from。');
+        if (to < from) throw new FduError('BAD_ARGS', '--to 不能小于 --from（不填 --from 时从现在这节算起）。');
         const free = freeRooms(page, from, to, { minCapacity: a.minSeats });
-        out.push({ building: b, date: page.date ?? day, week: page.week, periods: `第 ${from === to ? from : `${from}–${to}`} 节（${periodSpan(page.periods, from, to)}）`, freeCount: free.length, free });
-      }
+        return { building: b, date: page.date ?? day, week: page.week, periods: `第 ${from === to ? from : `${from}–${to}`} 节（${periodSpan(page.periods, from, to)}）`, freeCount: free.length, free };
+      });
       return { results: out, note: '「不开放自修」等标注也算占用；临时借用以学校系统为准。' };
     },
   }),
   op({
     name: 'rooms.day', summary: '教室的完整信息（给 AI 判断用）：每栋楼的汇总（按楼层的教室数、座位，查今天时还有现在空着 / 在用几间），每间教室的楼层、座位、全天每段安排（节次、时间、课程代码、课名、老师、人数、临借活动等）、空闲时段；查今天时附上现在的状态（空到几点，或在上什么、到几点）。不指定楼时查全部教学楼（数据较多）。',
-    login: 'uis', effect: 'read',
+    login: 'uis', effect: 'read', cacheTtl: REALTIME_TTL,
     params: {
       building: z.string().optional().describe(`教学楼代码，多个用逗号分开：${BUILDINGS.join('、')}（H2 = 二教，HGX = 光华楼）；不填查全部`),
       date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('日期 YYYY-MM-DD，默认今天'),
@@ -922,21 +931,24 @@ export const OPS: Op[] = [
       const day = a.date ?? today;
       const list = a.building ? buildingList(a.building, 12) : BUILDINGS;
       const nowHm = day === today ? new Date(ctx.now() + 8 * 3_600_000).toISOString().slice(11, 16) : undefined;
-      const results = [];
       const errors: Record<string, string> = {};
       let periods: { no: number; start: string; end: string }[] | undefined;
-      for (const b of list) {
+      // 先建立一次 WebVPN 会话，再 3 栋楼一起读（都在同一个浏览器页面里发请求）
+      if (ctx.session.hasState()) await ensureWebvpn(ctx.session);
+      const pages = await pool(list, 3, async (b) => {
         try {
           const page = await roomsDayPage(ctx, b, day);
           periods ??= page.periods;
           const report = roomsReport(b, page, { nowHm, room: a.room });
-          results.push(a.brief ? { ...report, rooms: report.rooms.map(({ schedule: _s, ...rest }) => rest) } : report);
+          return a.brief ? { ...report, rooms: report.rooms.map(({ schedule: _s, ...rest }) => rest) } : report;
         } catch (e) {
           // 登录问题直接报，其他问题（某栋楼读不到）记下来继续
           if (e instanceof FduError && e.code.startsWith('NEED_')) throw e;
           errors[b] = (e as Error).message;
+          return undefined;
         }
-      }
+      });
+      const results = pages.filter((r): r is NonNullable<typeof r> => !!r);
       const buildings = a.room ? results.filter((r) => r.rooms.length) : results;
       if (a.room && !buildings.length) throw new FduError('NOT_FOUND', `没有找到教室 ${a.room}。`, '检查教室号，或者用 --building 指定楼。');
       return {

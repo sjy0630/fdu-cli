@@ -30,6 +30,8 @@ export function redact(s: string): string {
     .replace(/[A-Za-z0-9%+/_-]{32,}={0,2}/g, '***');
 }
 
+const PARSE_HINT = '这不是网络问题。请到 https://github.com/sjy0630/fdu-cli/issues 反馈（附上这条信息）；有账号的话可以运行 `fdu dev capture --url <页面>` 录下接口结构一起发来。';
+
 /** 把各模块抛出的错误统一成 FduError */
 export function toFduError(e: unknown): FduError {
   if (e instanceof FduError) return e;
@@ -42,10 +44,16 @@ export function toFduError(e: unknown): FduError {
   // Playwright 的报错后面带一大段调用日志和终端颜色，只留第一行
   const message = redact(String(err?.message ?? e).replace(/\u001b\[[0-9;]*m/g, '').split(/\nCall log:|\n/)[0].replace(/^apiRequestContext\.\w+:\s*/, ''));
   if (err?.name === 'TreeholeLoginError') return new FduError('NEED_HOLE_LOGIN', '需要登录树洞账号。', '运行 `fdu hole login --email 学号@m.fudan.edu.cn`（密码只用来换取令牌，不保存）。');
-  if (err?.name === 'TimetableFormatError') return new FduError('FORMAT_CHANGED', message);
+  if (err?.name === 'TimetableFormatError') return new FduError('FORMAT_CHANGED', message, PARSE_HINT);
   if (err?.status === 403) return new FduError('PERMISSION', message);
-  if (/timeout|timed out|ECONN|ENOTFOUND|EAI_AGAIN|net::/i.test(message)) {
+  // 网络问题先判断（Node 的 fetch 失败也是 TypeError）
+  if (/timeout|timed out|ECONN|ENOTFOUND|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|socket hang up|fetch failed|net::/i.test(message)) {
     return new FduError('UPSTREAM', `连不上学校系统：${message.slice(0, 160)}`, '检查网络；部分系统只允许校园网访问，校外请先连学校 VPN。');
+  }
+  // 解析学校返回的内容时出错（字段缺失、JSON 不对、页面结构变了）：多半是学校页面改版，不是网络问题
+  if (e instanceof TypeError || e instanceof SyntaxError || e instanceof RangeError
+    || /格式和预期不同|页面可能更新了|没有找到.*(入口|数据|表格)|Unexpected token|is not valid JSON|JSON\.parse/i.test(message)) {
+    return new FduError('FORMAT_CHANGED', `学校系统返回的内容和预期不同（可能是页面改版了）：${message.slice(0, 200)}`, PARSE_HINT);
   }
   return new FduError('UPSTREAM', message.slice(0, 400));
 }

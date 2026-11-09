@@ -90,3 +90,53 @@ describe('MCP 里登录不阻塞', () => {
     expect(Object.keys(mcpShape(findOp('auth.login')!))).toEqual(['webvpn', 'url']);
   });
 });
+
+describe('错误分类', async () => {
+  const { toFduError } = await import('../src/core/errors');
+  it('解析出错归为页面改版，不让用户去查网络', () => {
+    expect(toFduError(new TypeError("Cannot read properties of undefined (reading 'data')")).code).toBe('FORMAT_CHANGED');
+    expect(toFduError(new SyntaxError('Unexpected token < in JSON at position 0')).code).toBe('FORMAT_CHANGED');
+    expect(toFduError(new Error('没有在校园卡页面上找到余额，学校页面可能更新了。')).code).toBe('FORMAT_CHANGED');
+    expect(toFduError(new Error('没有在校园卡页面上找到余额，学校页面可能更新了。')).hint).toContain('不是网络问题');
+  });
+  it('网络问题仍是 UPSTREAM（包括 Node fetch 失败的 TypeError）', () => {
+    expect(toFduError(new TypeError('fetch failed')).code).toBe('UPSTREAM');
+    expect(toFduError(new Error('apiRequestContext.get: Timeout 20000ms exceeded.')).code).toBe('UPSTREAM');
+    expect(toFduError(new Error('校车系统：系统维护')).code).toBe('UPSTREAM');
+  });
+  it('runOp 写上是哪个命令解析出错', async () => {
+    const op = { name: 'x.parse', summary: 'test op', login: 'none' as const, effect: 'read' as const, params: {}, run: async () => { throw new TypeError('bad'); } };
+    expect(await runOp(op, {} as Ctx, {})).toMatchObject({ ok: false, error: { code: 'FORMAT_CHANGED', message: expect.stringContaining('x.parse') } });
+  });
+});
+
+describe('缓存有效期', async () => {
+  const { Cache } = await import('../src/core/cache');
+  const { cacheTtl } = await import('../src/run');
+  it('过期的缓存当作没有并删掉；隐私数据和实时数据有效期更短', () => {
+    process.env.FDU_HOME = mkdtempSync(join(tmpdir(), 'fdu-'));
+    const cache = new Cache(new Store());
+    cache.set('jw.grades', {}, { gpa: 3.9 }, 0);
+    expect(cache.get('jw.grades', {}, 3_600_000, 1000)).not.toBeNull();
+    expect(cache.get('jw.grades', {}, 3_600_000, 3_600_001)).toBeNull();
+    expect(cache.get('jw.grades', {}, 3_600_000, 0)).toBeNull();
+    expect(cacheTtl(findOp('jw.grades')!)).toBe(24 * 3_600_000);
+    expect(cacheTtl(findOp('canteen.crowd')!)).toBe(30 * 60_000);
+    expect(cacheTtl(findOp('jw.timetable')!)).toBe(7 * 24 * 3_600_000);
+  });
+});
+
+describe('doctor 检查登录文件权限', async () => {
+  const { runDoctor } = await import('../src/services/doctor');
+  it('其他用户能读 mail.json 时提醒', async () => {
+    const r = await runDoctor({
+      nodeVersion: 'v22.0.0', platform: 'linux', configDir: '/cfg', configDirState: () => ({ writable: true, mode: 0o700 }),
+      secretFiles: () => [{ name: 'state.json', mode: 0o600 }, { name: 'mail.json', mode: 0o644 }],
+      browser: async () => 'chromium', reach: async (url) => ({ status: 200, url }),
+      login: async () => ({ hasState: false, elearning: 'need_login', jwfw: 'need_login', webvpn: false }), treehole: false, mail: true,
+    });
+    const c = r.checks.find((x) => x.name === '登录文件权限');
+    expect(c).toMatchObject({ status: 'warn', detail: expect.stringContaining('mail.json（644）'), fix: expect.stringContaining('chmod 600') });
+    expect(c!.detail).not.toContain('state.json');
+  });
+});

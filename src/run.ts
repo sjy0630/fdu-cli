@@ -12,6 +12,9 @@ export interface Failure {
 /** 这个操作的结果要不要缓存：只读的默认缓存，标了 cache: false 的不缓存 */
 export const cacheable = (op: Op) => op.effect === 'read' && op.cache !== false;
 
+/** 缓存保留多久：隐私数据（成绩、消费、邮件）24 小时，其他 7 天，实时数据由操作自己设得更短 */
+export const cacheTtl = (op: Op) => op.cacheTtl ?? (op.sensitive ? 24 * 3_600_000 : 7 * 24 * 3_600_000);
+
 /** 命令行参数名（kebab-case）→ 参数表里的名字（camelCase） */
 export const camel = (s: string) => s.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
 export const kebab = (s: string) => s.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
@@ -33,8 +36,8 @@ export async function runOp(op: Op, ctx: Ctx, input: Record<string, unknown>, op
     args = parsed.data;
     const useCache = !!ctx.cache && cacheable(op);
     if (opts.cachedOnly) {
-      const hit = useCache ? ctx.cache!.get(op.name, args) : null;
-      if (!hit) throw new FduError('NOT_FOUND', useCache ? '本地还没有这个查询的缓存。' : '这个命令的结果不缓存。', '去掉 --cached 联网查询一次。');
+      const hit = useCache ? ctx.cache!.get(op.name, args, cacheTtl(op), ctx.now()) : null;
+      if (!hit) throw new FduError('NOT_FOUND', useCache ? '本地没有这个查询的缓存（或者已经过期）。' : '这个命令的结果不缓存。', '去掉 --cached 联网查询一次。');
       return { ok: true, op: op.name, data: hit.data, cachedAt: hit.at };
     }
     let data: unknown;
@@ -52,10 +55,11 @@ export async function runOp(op: Op, ctx: Ctx, input: Record<string, unknown>, op
     return { ok: true, op: op.name, data };
   } catch (e) {
     const err = toFduError(e);
-    const failure: Failure = { ok: false, op: op.name, error: { code: err.code, message: err.message, ...(err.hint ? { hint: err.hint } : {}) } };
+    const message = err.code === 'FORMAT_CHANGED' && !err.message.includes(op.name) ? `${err.message}（命令 ${op.name}）` : err.message;
+    const failure: Failure = { ok: false, op: op.name, error: { code: err.code, message, ...(err.hint ? { hint: err.hint } : {}) } };
     // 没登录、学校系统出错时，附上上次的结果（参数错误等不附）
     if (!opts.cachedOnly && args && ctx.cache && cacheable(op) && (err.code.startsWith('NEED_') || err.code === 'UPSTREAM')) {
-      const hit = ctx.cache.get(op.name, args);
+      const hit = ctx.cache.get(op.name, args, cacheTtl(op), ctx.now());
       if (hit) failure.cached = { at: hit.at, data: hit.data };
     }
     return failure;
