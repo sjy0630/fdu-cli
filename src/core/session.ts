@@ -11,6 +11,7 @@ export interface FetchInit { method?: string; headers?: Record<string, string>; 
 
 const STATE = 'state.json';
 const LOGIN_LOG = 'login.json';
+const NET = 'net.json';
 /** 登录记录：最近一次登录 / 导入的时间，以及之前几次登录各保持了多少小时 */
 export interface LoginLog { lastLoginAt?: string; via?: string; expiredAt?: string; lastedHours?: number[] }
 /**
@@ -23,6 +24,15 @@ export function userAgent(platform: string = process.platform): string {
 }
 const UA = userAgent();
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** FDU_DEBUG=1 时把每一步花的时间写到 stderr（只写方法、主机和路径，不写参数和内容） */
+const DEBUG = !!process.env.FDU_DEBUG && process.env.FDU_DEBUG !== '0';
+export function debugTime(what: string, url: string | undefined, since: number): void {
+  if (!DEBUG) return;
+  let where = '';
+  try { if (url) { const u = new URL(url); where = ` ${u.host}${u.pathname}`; } } catch { /* 不是地址 */ }
+  process.stderr.write(`[fdu ${((Date.now() - since) / 1000).toFixed(1)}s] ${what}${where}\n`);
+}
 
 /** 值得重试的网络错误：超时、连接被重置、DNS 暂时解析不了 */
 export function transientError(e: unknown): 'timeout' | 'network' | undefined {
@@ -77,8 +87,12 @@ export class Session {
   private fromBrowser = false;
   /** 浏览器最后停在的地址（排查登录问题用，只取路径） */
   lastUrl = '';
-  /** 上次确认 WebVPN 已登录的时间（检查要开浏览器，短时间内不重复查） */
-  webvpnAliveAt?: number;
+  /**
+   * 上次确认 WebVPN 已登录的时间（检查要开浏览器，2 分钟内不重复查）。存在本地，下一条命令也能用；
+   * 发现 WebVPN 把请求带回登录页时设成 undefined 作废。
+   */
+  get webvpnAliveAt(): number | undefined { return this.store.readJson<{ webvpnAliveAt?: number }>(NET)?.webvpnAliveAt; }
+  set webvpnAliveAt(t: number | undefined) { this.store.writeJson(NET, { ...this.store.readJson<object>(NET), webvpnAliveAt: t }); }
   /** 常驻的无界面浏览器页面：只认真浏览器请求的系统（WebVPN）在这里发请求 */
   private bpage?: { context: BrowserContext; page: Page };
 
@@ -123,9 +137,12 @@ export class Session {
     let retries = idempotent ? init.retries ?? 2 : 0;
     let res;
     for (let attempt = 0; ; attempt++) {
+      const started = Date.now();
       try {
         res = await ctx.fetch(url, { method, headers: init.headers, data: init.body, maxRedirects: 20, timeout: init.timeoutMs ?? 20_000, failOnStatusCode: false });
+        debugTime(`${method} ${res.status()}${attempt ? `（第 ${attempt + 1} 次）` : ''}`, url, started);
       } catch (e) {
+        debugTime(`${method} 失败${attempt ? `（第 ${attempt + 1} 次）` : ''}`, url, started);
         const kind = transientError(e);
         if (kind === 'timeout') retries = Math.min(retries, 1);
         if (!kind || attempt >= retries) throw e;
@@ -164,7 +181,8 @@ export class Session {
       : [['Chrome', () => chromium.launch({ ...options, channel: 'chrome' })], ['Edge', () => chromium.launch({ ...options, channel: 'msedge' })], ['Playwright 自带的 Chromium', () => chromium.launch(options)]];
     const failures: string[] = [];
     for (const [name, start] of tries) {
-      try { return await start(); } catch (e) {
+      const started = Date.now();
+      try { const b = await start(); debugTime(`启动浏览器（${name}${options.headless ? '，无界面' : ''}）`, undefined, started); return b; } catch (e) {
         failures.push(`${name}：${String((e as Error).message ?? e).replace(/\u001b\[[0-9;]*m/g, '').split('\n').find((l) => l.trim() && !/^browserType\.launch/.test(l.trim()))?.trim().slice(0, 160) ?? '启动失败'}`);
       }
     }
@@ -195,6 +213,7 @@ export class Session {
    */
   async withPage(url: string, done: (page: Page, html: string) => Promise<boolean> | boolean, opts: { headless: boolean; timeoutMs: number; stuckOnUisMs?: number; platform?: FudanPlatform }): Promise<string> {
     // 常驻页面里拿到的 Cookie 先合并回来，再从同一份状态开新窗口
+    const pageStarted = Date.now();
     await this.dropBrowserPage();
     const browser = opts.headless ? (this.browser ??= await this.launch(true)) : await this.launch(false);
     const context = await browser.newContext({ storageState: await this.state(), proxy: proxyFromEnv(), userAgent: UA, viewport: opts.headless ? { width: 1280, height: 900 } : null });
@@ -232,6 +251,7 @@ export class Session {
       if (old) setTimeout(() => { void old.dispose().catch(() => undefined); }, 30_000).unref();
       this.dirty = true;
       this.fromBrowser = true;
+      debugTime(`打开页面（${opts.headless ? '无界面' : '有窗口'}）`, url, pageStarted);
       return html;
     } finally {
       await context.close().catch(() => undefined);
@@ -318,7 +338,9 @@ export class Session {
 
   /** 在常驻浏览器页面里发请求（同源），返回和 raw 一样的结果 */
   async browserFetch(url: string, init: FetchInit = {}): Promise<RawResponse> {
+    const started = Date.now();
     const page = await this.browserPage(new URL(url).origin);
+    debugTime('准备浏览器页面', url, started);
     const run = () => page.evaluate(async ([u, method, headers, body, ms]) => {
       const res = await fetch(u as string, { method: method as string, headers: headers as Record<string, string>, body: (body as string) || undefined, credentials: 'include', redirect: 'follow', signal: AbortSignal.timeout(ms as number) });
       return { status: res.status, url: res.url, contentType: res.headers.get('content-type') ?? '', text: await res.text() };
@@ -333,6 +355,7 @@ export class Session {
       }
     }
     this.dirty = true;
+    debugTime(`浏览器里 ${init.method ?? 'GET'} ${r.status}`, url, started);
     return r;
   }
 

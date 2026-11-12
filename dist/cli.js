@@ -81,12 +81,27 @@ function toFduError(e) {
 // src/core/session.ts
 var STATE = "state.json";
 var LOGIN_LOG = "login.json";
+var NET = "net.json";
 function userAgent(platform = process.platform) {
   const os = platform === "darwin" ? "Macintosh; Intel Mac OS X 10_15_7" : platform === "win32" ? "Windows NT 10.0; Win64; x64" : "X11; Linux x86_64";
   return `Mozilla/5.0 (${os}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36`;
 }
 var UA = userAgent();
 var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+var DEBUG = !!process.env.FDU_DEBUG && process.env.FDU_DEBUG !== "0";
+function debugTime(what, url, since) {
+  if (!DEBUG) return;
+  let where2 = "";
+  try {
+    if (url) {
+      const u = new URL(url);
+      where2 = ` ${u.host}${u.pathname}`;
+    }
+  } catch {
+  }
+  process.stderr.write(`[fdu ${((Date.now() - since) / 1e3).toFixed(1)}s] ${what}${where2}
+`);
+}
 function transientError(e) {
   const m = String(e?.message ?? e);
   if (/timeout|timed out|ETIMEDOUT/i.test(m)) return "timeout";
@@ -130,8 +145,16 @@ var Session = class {
   fromBrowser = false;
   /** 浏览器最后停在的地址（排查登录问题用，只取路径） */
   lastUrl = "";
-  /** 上次确认 WebVPN 已登录的时间（检查要开浏览器，短时间内不重复查） */
-  webvpnAliveAt;
+  /**
+   * 上次确认 WebVPN 已登录的时间（检查要开浏览器，2 分钟内不重复查）。存在本地，下一条命令也能用；
+   * 发现 WebVPN 把请求带回登录页时设成 undefined 作废。
+   */
+  get webvpnAliveAt() {
+    return this.store.readJson(NET)?.webvpnAliveAt;
+  }
+  set webvpnAliveAt(t) {
+    this.store.writeJson(NET, { ...this.store.readJson(NET), webvpnAliveAt: t });
+  }
   /** 常驻的无界面浏览器页面：只认真浏览器请求的系统（WebVPN）在这里发请求 */
   bpage;
   hasState() {
@@ -170,9 +193,12 @@ var Session = class {
     let retries = idempotent ? init.retries ?? 2 : 0;
     let res;
     for (let attempt = 0; ; attempt++) {
+      const started = Date.now();
       try {
         res = await ctx.fetch(url, { method, headers: init.headers, data: init.body, maxRedirects: 20, timeout: init.timeoutMs ?? 2e4, failOnStatusCode: false });
+        debugTime(`${method} ${res.status()}${attempt ? `\uFF08\u7B2C ${attempt + 1} \u6B21\uFF09` : ""}`, url, started);
       } catch (e) {
+        debugTime(`${method} \u5931\u8D25${attempt ? `\uFF08\u7B2C ${attempt + 1} \u6B21\uFF09` : ""}`, url, started);
         const kind = transientError(e);
         if (kind === "timeout") retries = Math.min(retries, 1);
         if (!kind || attempt >= retries) throw e;
@@ -205,8 +231,11 @@ var Session = class {
     const tries = path ? [[`FDU_BROWSER\uFF08${path}\uFF09`, () => chromium.launch({ ...options, executablePath: path })]] : [["Chrome", () => chromium.launch({ ...options, channel: "chrome" })], ["Edge", () => chromium.launch({ ...options, channel: "msedge" })], ["Playwright \u81EA\u5E26\u7684 Chromium", () => chromium.launch(options)]];
     const failures = [];
     for (const [name, start] of tries) {
+      const started = Date.now();
       try {
-        return await start();
+        const b = await start();
+        debugTime(`\u542F\u52A8\u6D4F\u89C8\u5668\uFF08${name}${options.headless ? "\uFF0C\u65E0\u754C\u9762" : ""}\uFF09`, void 0, started);
+        return b;
       } catch (e) {
         failures.push(`${name}\uFF1A${String(e.message ?? e).replace(/\u001b\[[0-9;]*m/g, "").split("\n").find((l) => l.trim() && !/^browserType\.launch/.test(l.trim()))?.trim().slice(0, 160) ?? "\u542F\u52A8\u5931\u8D25"}`);
       }
@@ -237,6 +266,7 @@ var Session = class {
    * 页面停在统一身份认证超过 stuckOnUisMs 时：无界面模式抛出 NeedLoginError，有界面模式继续等你登录。
    */
   async withPage(url, done, opts) {
+    const pageStarted = Date.now();
     await this.dropBrowserPage();
     const browser = opts.headless ? this.browser ??= await this.launch(true) : await this.launch(false);
     const context = await browser.newContext({ storageState: await this.state(), proxy: proxyFromEnv(), userAgent: UA, viewport: opts.headless ? { width: 1280, height: 900 } : null });
@@ -274,6 +304,7 @@ var Session = class {
       }, 3e4).unref();
       this.dirty = true;
       this.fromBrowser = true;
+      debugTime(`\u6253\u5F00\u9875\u9762\uFF08${opts.headless ? "\u65E0\u754C\u9762" : "\u6709\u7A97\u53E3"}\uFF09`, url, pageStarted);
       return html;
     } finally {
       await context.close().catch(() => void 0);
@@ -371,7 +402,9 @@ var Session = class {
   }
   /** 在常驻浏览器页面里发请求（同源），返回和 raw 一样的结果 */
   async browserFetch(url, init = {}) {
+    const started = Date.now();
     const page = await this.browserPage(new URL(url).origin);
+    debugTime("\u51C6\u5907\u6D4F\u89C8\u5668\u9875\u9762", url, started);
     const run = () => page.evaluate(async ([u, method, headers, body3, ms]) => {
       const res = await fetch(u, { method, headers, body: body3 || void 0, credentials: "include", redirect: "follow", signal: AbortSignal.timeout(ms) });
       return { status: res.status, url: res.url, contentType: res.headers.get("content-type") ?? "", text: await res.text() };
@@ -387,6 +420,7 @@ var Session = class {
       }
     }
     this.dirty = true;
+    debugTime(`\u6D4F\u89C8\u5668\u91CC ${init.method ?? "GET"} ${r.status}`, url, started);
     return r;
   }
   /** 常驻页面里拿到的 Cookie 合并回会话，然后关掉它 */
@@ -2459,15 +2493,21 @@ var TreeholeClient = class {
   }
   /** 校园网内直连，否则走 WebVPN（结果缓存 10 分钟） */
   async via() {
+    this.route ??= this.deps.route?.get() ?? void 0;
     if (this.route && this.now() < this.route.until) return this.route.via;
     let via = "webvpn";
     try {
-      const res = await this.deps.fetch(`${FORUM}/divisions`, { timeoutMs: 3e3 });
+      const res = await this.deps.fetch(`${FORUM}/divisions`, { timeoutMs: 3e3, retries: 0 });
       if (res.status > 0 && /json/.test(res.contentType)) via = "direct";
     } catch {
     }
-    this.route = { via, until: this.now() + 10 * 6e4 };
+    this.setRoute(via);
+    if (via === "webvpn") this.deps.log?.("\u6811\u6D1E\u53EA\u5BF9\u6821\u56ED\u7F51\u5F00\u653E\uFF0C\u7ECF WebVPN \u8FDE\u63A5\uFF08\u7B2C\u4E00\u6B21\u8981\u542F\u52A8\u6D4F\u89C8\u5668\uFF0C\u7EA6 10\u201320 \u79D2\uFF09\u2026\u2026");
     return via;
+  }
+  setRoute(via) {
+    this.route = { via, until: this.now() + 10 * 6e4 };
+    this.deps.route?.set(this.route);
   }
   /** 发请求；WebVPN 会话失效时重新建立一次 */
   async send(url, init = {}) {
@@ -2475,11 +2515,12 @@ var TreeholeClient = class {
     if (via === "direct") {
       const direct = await this.deps.fetch(url, init).catch(() => void 0);
       if (direct && (/json/.test(direct.contentType) || !/<html/i.test(direct.text))) return direct;
-      this.route = { via: "webvpn", until: this.now() + 10 * 6e4 };
+      this.setRoute("webvpn");
     }
     const target = toWebvpnUrl(url);
     let res = await this.deps.fetch(target, init);
     if (vpnLoginPage(res)) {
+      this.deps.log?.("WebVPN \u4F1A\u8BDD\u8FC7\u671F\u4E86\uFF0C\u6B63\u5728\u91CD\u65B0\u5EFA\u7ACB\u2026\u2026");
       await this.deps.ensureWebvpn();
       res = await this.deps.fetch(target, init);
       if (vpnLoginPage(res)) throw new TreeholeError("WebVPN \u767B\u5F55\u6CA1\u6709\u6210\u529F\uFF1A\u8BF7\u5148\u8FD0\u884C fdu login --webvpn\uFF0C\u518D\u767B\u5F55\u6811\u6D1E\u3002");
@@ -3633,6 +3674,7 @@ function safeTarget(dir, name) {
   return target;
 }
 var HOLE = "hole.json";
+var NET2 = "net.json";
 var MAIL = "mail.json";
 function viaWebvpnAware(ctx, url, init) {
   return url.startsWith("https://webvpn.fudan.edu.cn/") ? ctx.session.browserFetch(url, init) : ctx.session.raw(url, init);
@@ -3640,7 +3682,11 @@ function viaWebvpnAware(ctx, url, init) {
 function treehole(ctx) {
   return new TreeholeClient({
     fetch: (url, init) => viaWebvpnAware(ctx, url, init),
-    ensureWebvpn: () => ensureWebvpn(ctx.session),
+    // 走到这里说明 WebVPN 已经把请求带回登录页：本地记的「WebVPN 有效」作废，重新建立
+    ensureWebvpn: () => {
+      ctx.session.webvpnAliveAt = void 0;
+      return ensureWebvpn(ctx.session);
+    },
     tokens: {
       get: () => ctx.store.readJson(HOLE),
       set: (t) => {
@@ -3648,6 +3694,11 @@ function treehole(ctx) {
         else ctx.store.remove(HOLE);
       }
     },
+    route: {
+      get: () => ctx.store.readJson(NET2)?.treehole ?? null,
+      set: (r) => ctx.store.writeJson(NET2, { ...ctx.store.readJson(NET2), treehole: r })
+    },
+    log: ctx.log,
     now: ctx.now
   });
 }
@@ -3660,7 +3711,10 @@ function icourse(ctx) {
   if (!ctx.session.hasState()) throw new NeedLoginError("icourse");
   return new IcourseClient({
     fetch: (url, init) => viaWebvpnAware(ctx, url, { timeoutMs: init?.timeoutMs }),
-    ensureWebvpn: () => ensureWebvpn(ctx.session),
+    ensureWebvpn: () => {
+      ctx.session.webvpnAliveAt = void 0;
+      return ensureWebvpn(ctx.session);
+    },
     openInBrowser: async (url, done) => {
       await ctx.session.withPage(url, (page) => done(page.url()), { headless: true, timeoutMs: 3e4, platform: "icourse" });
     }
@@ -3965,6 +4019,7 @@ var OPS = [
         throw new FduError("BAD_ARGS", e.message);
       }
       for (const [name, value] of Object.entries(bundle.files)) ctx.store.writeJson(name, value);
+      ctx.store.remove(NET2);
       ctx.session.noteLogin("import");
       const [elearningStatus, jwfw] = await Promise.all([platformStatus(ctx.session, "elearning"), platformStatus(ctx.session, "jwfw")]).catch(() => ["unknown", "unknown"]);
       return {
@@ -3986,6 +4041,7 @@ var OPS = [
     params: {},
     async run(ctx) {
       ctx.store.remove("library.json");
+      ctx.store.remove(NET2);
       return { removed: ctx.session.clear(), cacheCleared: ctx.cache?.clear() ?? 0 };
     }
   }),

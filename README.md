@@ -165,7 +165,8 @@ fdu describe jw.lessons     # 一个命令的说明（JSON，给 AI 看）
 | `library.json` | 图书馆借阅的令牌 |
 | `hole.json` | 树洞令牌 |
 | `mail.json` | 邮箱 IMAP 配置和客户端专用密码（**明文**） |
-| `cache/` | 查询结果的缓存（含成绩等） |
+| `cache/` | 查询结果的缓存（含成绩等），有有效期 |
+| `login.json`、`net.json` | 上次登录的时间；树洞走直连还是 WebVPN、WebVPN 最近一次确认有效的时间（不含登录信息） |
 
 这些文件能代表你登录学校系统：不要同步到网盘、提交到仓库或发给别人。删除：`fdu logout`（同时删除图书馆令牌和缓存）、`fdu hole logout`、`fdu mail forget`、`fdu cache clear`。
 

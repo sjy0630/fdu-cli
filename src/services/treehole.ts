@@ -15,7 +15,7 @@ export const DANKE = 'https://danke.fduhole.com/api';
 
 export interface HoleTokens { access: string; refresh: string }
 export interface RawResponse { status: number; url: string; contentType: string; text: string }
-export type RawFetch = (url: string, init: { method?: string; headers?: Record<string, string>; body?: string; timeoutMs?: number }) => Promise<RawResponse>;
+export type RawFetch = (url: string, init: { method?: string; headers?: Record<string, string>; body?: string; timeoutMs?: number; retries?: number }) => Promise<RawResponse>;
 
 export class TreeholeLoginError extends Error {
   constructor(message = '需要登录树洞账号：运行 fdu hole login。') { super(message); this.name = 'TreeholeLoginError'; }
@@ -30,6 +30,10 @@ export interface TreeholeDeps {
   ensureWebvpn: () => Promise<void>;
   tokens: { get(): HoleTokens | null; set(t: HoleTokens | null): void };
   now?: () => number;
+  /** 上次选的路线（直连 / WebVPN）存在本地，下一条命令不用再探测 */
+  route?: { get(): { via: 'direct' | 'webvpn'; until: number } | null; set(r: { via: 'direct' | 'webvpn'; until: number }): void };
+  /** 进度提示（写到 stderr） */
+  log?: (msg: string) => void;
 }
 
 const clean = (s: unknown, max = 600) => (typeof s === 'string' ? s : '')
@@ -51,14 +55,22 @@ export class TreeholeClient implements TreeholeApi {
 
   /** 校园网内直连，否则走 WebVPN（结果缓存 10 分钟） */
   private async via(): Promise<'direct' | 'webvpn'> {
+    this.route ??= this.deps.route?.get() ?? undefined;
     if (this.route && this.now() < this.route.until) return this.route.via;
     let via: 'direct' | 'webvpn' = 'webvpn';
+    // 只是探测：连不上就是在校外，不重试
     try {
-      const res = await this.deps.fetch(`${FORUM}/divisions`, { timeoutMs: 3000 });
+      const res = await this.deps.fetch(`${FORUM}/divisions`, { timeoutMs: 3000, retries: 0 });
       if (res.status > 0 && /json/.test(res.contentType)) via = 'direct';
     } catch { /* 连不上：校外 */ }
-    this.route = { via, until: this.now() + 10 * 60_000 };
+    this.setRoute(via);
+    if (via === 'webvpn') this.deps.log?.('树洞只对校园网开放，经 WebVPN 连接（第一次要启动浏览器，约 10–20 秒）……');
     return via;
+  }
+
+  private setRoute(via: 'direct' | 'webvpn') {
+    this.route = { via, until: this.now() + 10 * 60_000 };
+    this.deps.route?.set(this.route);
   }
 
   /** 发请求；WebVPN 会话失效时重新建立一次 */
@@ -68,11 +80,12 @@ export class TreeholeClient implements TreeholeApi {
       const direct = await this.deps.fetch(url, init).catch(() => undefined);
       // 直连拿到的是网页（例如「请使用校园网访问」）或连不上：改走 WebVPN
       if (direct && (/json/.test(direct.contentType) || !/<html/i.test(direct.text))) return direct;
-      this.route = { via: 'webvpn', until: this.now() + 10 * 60_000 };
+      this.setRoute('webvpn');
     }
     const target = toWebvpnUrl(url);
     let res = await this.deps.fetch(target, init);
     if (vpnLoginPage(res)) {
+      this.deps.log?.('WebVPN 会话过期了，正在重新建立……');
       await this.deps.ensureWebvpn();
       res = await this.deps.fetch(target, init);
       if (vpnLoginPage(res)) throw new TreeholeError('WebVPN 登录没有成功：请先运行 fdu login --webvpn，再登录树洞。');

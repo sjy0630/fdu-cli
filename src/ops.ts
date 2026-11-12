@@ -153,22 +153,30 @@ export function safeTarget(dir: string, name: string): string {
 
 // ---------- 树洞、邮箱 ----------
 const HOLE = 'hole.json';
+/** 网络路线的本地记录（树洞走直连还是 WebVPN），不含任何登录信息 */
+const NET = 'net.json';
 const MAIL = 'mail.json';
 interface MailConfig { host: string; port: number; user: string; password: string }
 
 /** 经过 WebVPN 的请求在浏览器里发（WebVPN 只认真正的浏览器），其余照常 */
-function viaWebvpnAware(ctx: Ctx, url: string, init?: { method?: string; headers?: Record<string, string>; body?: string; timeoutMs?: number }) {
+function viaWebvpnAware(ctx: Ctx, url: string, init?: { method?: string; headers?: Record<string, string>; body?: string; timeoutMs?: number; retries?: number }) {
   return url.startsWith('https://webvpn.fudan.edu.cn/') ? ctx.session.browserFetch(url, init) : ctx.session.raw(url, init);
 }
 
 function treehole(ctx: Ctx): TreeholeClient {
   return new TreeholeClient({
     fetch: (url, init) => viaWebvpnAware(ctx, url, init),
-    ensureWebvpn: () => ensureWebvpn(ctx.session),
+    // 走到这里说明 WebVPN 已经把请求带回登录页：本地记的「WebVPN 有效」作废，重新建立
+    ensureWebvpn: () => { ctx.session.webvpnAliveAt = undefined; return ensureWebvpn(ctx.session); },
     tokens: {
       get: () => ctx.store.readJson<HoleTokens>(HOLE),
       set: (t) => { if (t) ctx.store.writeJson(HOLE, t); else ctx.store.remove(HOLE); },
     },
+    route: {
+      get: () => ctx.store.readJson<{ treehole?: { via: 'direct' | 'webvpn'; until: number } }>(NET)?.treehole ?? null,
+      set: (r) => ctx.store.writeJson(NET, { ...ctx.store.readJson<object>(NET), treehole: r }),
+    },
+    log: ctx.log,
     now: ctx.now,
   });
 }
@@ -184,7 +192,7 @@ function icourse(ctx: Ctx): IcourseClient {
   if (!ctx.session.hasState()) throw new NeedLoginError('icourse');
   return new IcourseClient({
     fetch: (url, init) => viaWebvpnAware(ctx, url, { timeoutMs: init?.timeoutMs }),
-    ensureWebvpn: () => ensureWebvpn(ctx.session),
+    ensureWebvpn: () => { ctx.session.webvpnAliveAt = undefined; return ensureWebvpn(ctx.session); },
     openInBrowser: async (url, done) => { await ctx.session.withPage(url, (page) => done(page.url()), { headless: true, timeoutMs: 30_000, platform: 'icourse' }); },
   });
 }
@@ -472,6 +480,7 @@ export const OPS: Op[] = [
       let bundle;
       try { bundle = unpackSession(text); } catch (e) { throw new FduError('BAD_ARGS', (e as Error).message); }
       for (const [name, value] of Object.entries(bundle.files)) ctx.store.writeJson(name, value);
+      ctx.store.remove(NET);
       ctx.session.noteLogin('import');
       const [elearningStatus, jwfw] = await Promise.all([platformStatus(ctx.session, 'elearning'), platformStatus(ctx.session, 'jwfw')]).catch(() => ['unknown', 'unknown']);
       return {
@@ -483,7 +492,7 @@ export const OPS: Op[] = [
   }),
   op({
     name: 'auth.logout', summary: '删除本机保存的复旦账号登录状态（树洞、邮箱分别用 fdu hole logout、fdu mail forget）。', login: 'none', effect: 'auth', mcp: false, params: {},
-    async run(ctx) { ctx.store.remove('library.json'); return { removed: ctx.session.clear(), cacheCleared: ctx.cache?.clear() ?? 0 }; },
+    async run(ctx) { ctx.store.remove('library.json'); ctx.store.remove(NET); return { removed: ctx.session.clear(), cacheCleared: ctx.cache?.clear() ?? 0 }; },
   }),
   op({
     name: 'auth.doctor', summary: '检查运行环境：Node.js、浏览器、配置目录、能不能连上各个学校系统、各账号的登录状态，每项给出修复建议（结果里没有账号和 Cookie，可以直接发给别人帮忙看）。',
