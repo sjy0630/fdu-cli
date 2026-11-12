@@ -50,13 +50,43 @@ export function resolveOpName(positionals: string[]): { name?: string; rest: str
 }
 
 function prompt(question: string, opts: { hidden?: boolean } = {}): Promise<string> {
+  if (opts.hidden && process.stdin.isTTY) return readHidden(question);
   return new Promise((resolve) => {
     const rl = createInterface({ input: process.stdin, output: process.stderr, terminal: !!process.stdin.isTTY });
-    if (opts.hidden && process.stdin.isTTY) {
-      process.stderr.write(question);
-      (rl as unknown as { _writeToOutput: (s: string) => void })._writeToOutput = () => undefined;
-      rl.question('', (answer) => { rl.close(); process.stderr.write('\n'); resolve(answer); });
-    } else rl.question(question, (answer) => { rl.close(); resolve(answer); });
+    rl.question(question, (answer) => { rl.close(); resolve(answer); });
+  });
+}
+
+/**
+ * 不回显地读一行（密码、导出的登录状态）。
+ * 不用 readline：它开始等输入时会清掉当前行，把刚写出来的提示一起擦掉，看起来像卡住了。
+ * 终端切到原始模式逐个字符读：回车结束，退格删一个字，Ctrl+C 退出；粘贴时终端加的转义序列（方向键、括号粘贴标记）忽略。
+ */
+export function readHidden(question: string, input: NodeJS.ReadStream = process.stdin, output: NodeJS.WritableStream = process.stderr): Promise<string> {
+  return new Promise((resolve) => {
+    output.write(question);
+    let value = '';
+    const wasRaw = input.isRaw;
+    input.setRawMode?.(true);
+    input.setEncoding('utf8');
+    input.resume();
+    const finish = () => {
+      input.removeListener('data', onData);
+      input.setRawMode?.(wasRaw);
+      input.pause();
+      output.write('\n');
+    };
+    const onData = (chunk: string) => {
+      for (const ch of chunk.replace(/\u001b\[[0-9;]*[A-Za-z~]/g, '')) {
+        if (ch === '\r' || ch === '\n') { finish(); resolve(value); return; }
+        if (ch === '\u0003') { finish(); process.exit(130); }
+        if (ch === '\u0004') { if (!value) { finish(); resolve(value); return; } continue; }
+        if (ch === '\u007f' || ch === '\b') { value = [...value].slice(0, -1).join(''); continue; }
+        if (ch < ' ') continue;
+        value += ch;
+      }
+    };
+    input.on('data', onData);
   });
 }
 

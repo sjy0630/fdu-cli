@@ -4011,7 +4011,7 @@ var OPS = [
       let text2;
       if (a.file) text2 = readFileSync2(resolve(ctx.cwd, a.file), "utf8");
       else if (!process.stdin.isTTY) text2 = await readStdin();
-      else text2 = await needPrompt(ctx)("\u7C98\u8D34 fdu auth export \u5BFC\u51FA\u7684\u5185\u5BB9\uFF08\u4E0D\u4F1A\u663E\u793A\uFF09\uFF0C\u7136\u540E\u56DE\u8F66\uFF1A", { hidden: true });
+      else text2 = await needPrompt(ctx)("\u7C98\u8D34 fdu auth export \u5BFC\u51FA\u7684\u5185\u5BB9\uFF08\u7C98\u8D34\u540E\u4E0D\u4F1A\u663E\u793A\uFF0C\u76F4\u63A5\u6309\u56DE\u8F66\uFF09\uFF1A", { hidden: true });
       let bundle;
       try {
         bundle = unpackSession(text2);
@@ -4914,7 +4914,7 @@ var OPS = [
     mcp: false,
     params: { email: z.string().email().describe("\u6811\u6D1E\u8D26\u53F7\u90AE\u7BB1\uFF0C\u901A\u5E38\u662F \u5B66\u53F7@m.fudan.edu.cn") },
     async run(ctx, a) {
-      const password = await needPrompt(ctx)("\u6811\u6D1E\u5BC6\u7801\uFF08\u4E0D\u4F1A\u663E\u793A\uFF0C\u4E5F\u4E0D\u4F1A\u4FDD\u5B58\uFF09\uFF1A", { hidden: true });
+      const password = await needPrompt(ctx)("\u6811\u6D1E\u5BC6\u7801\uFF08\u8F93\u5165\u65F6\u4E0D\u4F1A\u663E\u793A\uFF0C\u8F93\u5B8C\u6309\u56DE\u8F66\uFF1B\u5BC6\u7801\u4E0D\u4F1A\u4FDD\u5B58\uFF09\uFF1A", { hidden: true });
       await treehole(ctx).login(a.email, password);
       return { loggedIn: true };
     }
@@ -4989,7 +4989,7 @@ var OPS = [
     mcp: false,
     params: { user: z.string().email().describe("\u90AE\u7BB1\u5730\u5740"), host: z.string().optional().describe(`IMAP \u670D\u52A1\u5668\uFF0C\u9ED8\u8BA4 ${DEFAULT_FUDAN_STUDENT_IMAP.host}`), port: int2("\u7AEF\u53E3\uFF0C\u9ED8\u8BA4 993", 1, 65535) },
     async run(ctx, a) {
-      const password = await needPrompt(ctx)("\u5BA2\u6237\u7AEF\u4E13\u7528\u5BC6\u7801\uFF08\u4E0D\u4F1A\u663E\u793A\uFF09\uFF1A", { hidden: true });
+      const password = await needPrompt(ctx)("\u5BA2\u6237\u7AEF\u4E13\u7528\u5BC6\u7801\uFF08\u8F93\u5165\u65F6\u4E0D\u4F1A\u663E\u793A\uFF0C\u8F93\u5B8C\u6309\u56DE\u8F66\uFF09\uFF1A", { hidden: true });
       const cfg = { host: a.host ?? DEFAULT_FUDAN_STUDENT_IMAP.host, port: a.port ?? DEFAULT_FUDAN_STUDENT_IMAP.port, user: a.user, password };
       if (!await new ImapMailClient(cfg).ping()) throw new FduError("NEED_MAIL_SETUP", "\u8FDE\u4E0D\u4E0A\u90AE\u7BB1\u3002", "\u68C0\u67E5\u90AE\u7BB1\u5730\u5740\u3001\u5BA2\u6237\u7AEF\u4E13\u7528\u5BC6\u7801\uFF0C\u5E76\u786E\u8BA4\u7F51\u9875\u90AE\u7BB1\u5DF2\u5F00\u542F IMAP\u3002");
       ctx.store.writeJson(MAIL, cfg);
@@ -5378,20 +5378,57 @@ function resolveOpName(positionals) {
   return { name: b ? `${a}.${b}` : a, rest };
 }
 function prompt(question, opts = {}) {
+  if (opts.hidden && process.stdin.isTTY) return readHidden(question);
   return new Promise((resolve2) => {
     const rl = createInterface({ input: process.stdin, output: process.stderr, terminal: !!process.stdin.isTTY });
-    if (opts.hidden && process.stdin.isTTY) {
-      process.stderr.write(question);
-      rl._writeToOutput = () => void 0;
-      rl.question("", (answer) => {
-        rl.close();
-        process.stderr.write("\n");
-        resolve2(answer);
-      });
-    } else rl.question(question, (answer) => {
+    rl.question(question, (answer) => {
       rl.close();
       resolve2(answer);
     });
+  });
+}
+function readHidden(question, input = process.stdin, output = process.stderr) {
+  return new Promise((resolve2) => {
+    output.write(question);
+    let value = "";
+    const wasRaw = input.isRaw;
+    input.setRawMode?.(true);
+    input.setEncoding("utf8");
+    input.resume();
+    const finish = () => {
+      input.removeListener("data", onData);
+      input.setRawMode?.(wasRaw);
+      input.pause();
+      output.write("\n");
+    };
+    const onData = (chunk) => {
+      for (const ch of chunk.replace(/\u001b\[[0-9;]*[A-Za-z~]/g, "")) {
+        if (ch === "\r" || ch === "\n") {
+          finish();
+          resolve2(value);
+          return;
+        }
+        if (ch === "") {
+          finish();
+          process.exit(130);
+        }
+        if (ch === "") {
+          if (!value) {
+            finish();
+            resolve2(value);
+            return;
+          }
+          continue;
+        }
+        if (ch === "\x7F" || ch === "\b") {
+          value = [...value].slice(0, -1).join("");
+          continue;
+        }
+        if (ch < " ") continue;
+        value += ch;
+      }
+    };
+    input.on("data", onData);
   });
 }
 async function main(argv) {
@@ -5489,5 +5526,6 @@ if (invokedDirectly) {
 export {
   main,
   parseArgs,
+  readHidden,
   resolveOpName
 };

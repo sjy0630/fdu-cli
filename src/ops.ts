@@ -476,7 +476,7 @@ export const OPS: Op[] = [
       let text: string;
       if (a.file) text = readFileSync(resolve(ctx.cwd, a.file), 'utf8');
       else if (!process.stdin.isTTY) text = await readStdin();
-      else text = await needPrompt(ctx)('粘贴 fdu auth export 导出的内容（不会显示），然后回车：', { hidden: true });
+      else text = await needPrompt(ctx)('粘贴 fdu auth export 导出的内容（粘贴后不会显示，直接按回车）：', { hidden: true });
       let bundle;
       try { bundle = unpackSession(text); } catch (e) { throw new FduError('BAD_ARGS', (e as Error).message); }
       for (const [name, value] of Object.entries(bundle.files)) ctx.store.writeJson(name, value);
@@ -1145,7 +1145,7 @@ export const OPS: Op[] = [
     name: 'hole.login', summary: '登录树洞（旦挞）账号：密码只用来换取令牌，不保存。校外会自动走 WebVPN（需要先 fdu login）。', login: 'none', effect: 'auth', mcp: false,
     params: { email: z.string().email().describe('树洞账号邮箱，通常是 学号@m.fudan.edu.cn') },
     async run(ctx, a) {
-      const password = await needPrompt(ctx)('树洞密码（不会显示，也不会保存）：', { hidden: true });
+      const password = await needPrompt(ctx)('树洞密码（输入时不会显示，输完按回车；密码不会保存）：', { hidden: true });
       await treehole(ctx).login(a.email, password);
       return { loggedIn: true };
     },
@@ -1185,7 +1185,7 @@ export const OPS: Op[] = [
     name: 'mail.setup', summary: '配置学生邮箱（IMAP，只读）：需要网页邮箱里生成的客户端专用密码；密码以明文保存在本机配置目录（权限 600）。', login: 'none', effect: 'auth', mcp: false,
     params: { user: z.string().email().describe('邮箱地址'), host: z.string().optional().describe(`IMAP 服务器，默认 ${DEFAULT_FUDAN_STUDENT_IMAP.host}`), port: int('端口，默认 993', 1, 65535) },
     async run(ctx, a) {
-      const password = await needPrompt(ctx)('客户端专用密码（不会显示）：', { hidden: true });
+      const password = await needPrompt(ctx)('客户端专用密码（输入时不会显示，输完按回车）：', { hidden: true });
       const cfg: MailConfig = { host: a.host ?? DEFAULT_FUDAN_STUDENT_IMAP.host, port: a.port ?? DEFAULT_FUDAN_STUDENT_IMAP.port, user: a.user, password };
       if (!(await new ImapMailClient(cfg).ping())) throw new FduError('NEED_MAIL_SETUP', '连不上邮箱。', '检查邮箱地址、客户端专用密码，并确认网页邮箱已开启 IMAP。');
       ctx.store.writeJson(MAIL, cfg);
