@@ -5157,7 +5157,7 @@ function describeOp(op2) {
 }
 
 // src/mcp.ts
-var VERSION = true ? "0.3.0" : "0.0.0-dev";
+var VERSION = true ? "0.3.1" : "0.0.0-dev";
 var LOGIN_NOTE = {
   uis: "\u9700\u8981\u590D\u65E6\u8D26\u53F7\u767B\u5F55\uFF08\u6CA1\u767B\u5F55\u65F6\u8FD4\u56DE NEED_LOGIN\uFF0C\u8BF7\u7528\u6237\u5728\u7EC8\u7AEF\u8FD0\u884C `fdu login`\uFF0C\u6216\u8C03\u7528 auth_login\uFF09\u3002",
   hole: "\u9700\u8981\u6811\u6D1E\u8D26\u53F7\uFF08\u6CA1\u767B\u5F55\u65F6\u8FD4\u56DE NEED_HOLE_LOGIN\uFF0C\u8BF7\u7528\u6237\u5728\u7EC8\u7AEF\u8FD0\u884C `fdu hole login --email ...`\uFF09\u3002",
@@ -5332,7 +5332,7 @@ function helpOp(op2) {
 }
 
 // src/cli.ts
-var VERSION2 = true ? "0.3.0" : "0.0.0-dev";
+var VERSION2 = true ? "0.3.1" : "0.0.0-dev";
 var ALIASES = {
   login: "auth.login",
   logout: "auth.logout",
